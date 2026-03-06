@@ -1,0 +1,581 @@
+---
+title: Agents
+description: Building AI agents that implement the Agent Client Protocol
+---
+
+## What is an Agent?
+
+An **Agent** in ACP is the AI-powered component that processes user requests, executes tools, and generates responses. Agents implement the `Agent` interface to handle requests from clients (typically code editors).
+
+```dart
+abstract class Agent {
+  Future<InitializeResponse> initialize(InitializeRequest params);
+  Future<NewSessionResponse> newSession(NewSessionRequest params);
+  Future<PromptResponse> prompt(PromptRequest params);
+  Future<void> cancel(CancelNotification params);
+  // ... other methods
+}
+```
+
+## Creating an Agent
+
+To create an agent, implement the `Agent` interface and set up an `AgentSideConnection`:
+
+```dart
+import 'dart:io';
+import 'package:acp_dart/acp_dart.dart';
+
+class MyAgent implements Agent {
+  final AgentSideConnection _connection;
+  final Map<String, SessionState> _sessions = {};
+
+  MyAgent(this._connection);
+
+  @override
+  Future<InitializeResponse> initialize(InitializeRequest params) async {
+    return InitializeResponse(
+      protocolVersion: 1,
+      agentCapabilities: AgentCapabilities(
+        loadSession: false,
+        mcpCapabilities: McpCapabilities(
+          http: true,
+          sse: false,
+        ),
+        promptCapabilities: PromptCapabilities(
+          image: true,
+          audio: false,
+          embeddedContext: true,
+        ),
+      ),
+      authMethods: [],
+    );
+  }
+
+  // Implement other required methods...
+}
+
+void main() {
+  final stream = ndJsonStream(stdin, stdout);
+  final connection = AgentSideConnection(
+    (conn) => MyAgent(conn),
+    stream,
+  );
+}
+```
+
+<Info>
+The `AgentSideConnection` constructor takes a factory function that receives the connection and returns your agent instance. This allows your agent to use the connection for outbound requests.
+</Info>
+
+## Agent Lifecycle Methods
+
+### initialize
+
+Establishes the connection and negotiates capabilities.
+
+**When called**: Once at the beginning of the connection
+
+**Responsibilities**:
+- Negotiate protocol version (currently `1`)
+- Advertise agent capabilities
+- Declare supported authentication methods
+- Return agent information
+
+```dart
+@override
+Future<InitializeResponse> initialize(InitializeRequest params) async {
+  // Check client capabilities
+  final canWriteFiles = params.clientCapabilities?.fs?.writeTextFile ?? false;
+  final hasTerminal = params.clientCapabilities?.terminal ?? false;
+
+  return InitializeResponse(
+    protocolVersion: 1,
+    agentCapabilities: AgentCapabilities(
+      loadSession: true,  // Can restore previous sessions
+      sessionCapabilities: SessionCapabilities(
+        fork: SessionForkCapabilities(),
+        list: SessionListCapabilities(),
+      ),
+    ),
+    agentInfo: Implementation(
+      name: 'my-agent',
+      version: '1.0.0',
+      title: 'My Custom Agent',
+    ),
+    authMethods: [
+      AuthMethod(
+        id: 'api-key',
+        name: 'API Key',
+        description: 'Authenticate using an API key',
+      ),
+    ],
+  );
+}
+```
+
+### authenticate
+
+Handles authentication requests from the client.
+
+**When called**: When the client needs to authenticate before creating sessions
+
+```dart
+@override
+Future<AuthenticateResponse?>? authenticate(
+  AuthenticateRequest params,
+) async {
+  if (params.methodId == 'api-key') {
+    // Validate API key (implement your logic)
+    final isValid = await validateApiKey();
+    if (!isValid) {
+      throw RequestError.authRequired('Invalid API key');
+    }
+    return AuthenticateResponse();
+  }
+  throw RequestError.methodNotFound('authenticate');
+}
+```
+
+<Tip>
+If your agent doesn't require authentication, return `AuthenticateResponse()` or `null` and provide an empty `authMethods` list during initialization.
+</Tip>
+
+### newSession
+
+Creates a new conversation session.
+
+**When called**: When the client wants to start a new conversation
+
+**Responsibilities**:
+- Generate a unique session ID
+- Initialize session state
+- Connect to MCP servers if provided
+- Return available modes and models
+
+```dart
+@override
+Future<NewSessionResponse> newSession(NewSessionRequest params) async {
+  final sessionId = generateUniqueId();
+  
+  // Connect to MCP servers
+  for (final server in params.mcpServers) {
+    await connectToMcpServer(server);
+  }
+
+  // Initialize session state
+  _sessions[sessionId] = SessionState(
+    cwd: params.cwd,
+    history: [],
+    currentMode: 'code',
+  );
+
+  return NewSessionResponse(
+    sessionId: sessionId,
+    modes: SessionModeState(
+      availableModes: [
+        SessionMode(id: 'ask', name: 'Ask', description: 'Q&A mode'),
+        SessionMode(id: 'code', name: 'Code', description: 'Coding mode'),
+        SessionMode(id: 'architect', name: 'Architect', description: 'Design mode'),
+      ],
+      currentModeId: 'code',
+    ),
+    models: SessionModelState(
+      availableModels: [
+        ModelInfo(modelId: 'gpt-4', name: 'GPT-4'),
+        ModelInfo(modelId: 'claude-3', name: 'Claude 3'),
+      ],
+      currentModelId: 'gpt-4',
+    ),
+  );
+}
+```
+
+### loadSession
+
+Restores a previously saved session.
+
+**When called**: When the client wants to resume a previous conversation
+
+**Optional**: Only implement if `loadSession` capability is advertised
+
+```dart
+@override
+Future<LoadSessionResponse>? loadSession(LoadSessionRequest params) async {
+  final session = await loadSessionFromStorage(params.sessionId);
+  
+  if (session == null) {
+    throw RequestError.resourceNotFound(params.sessionId);
+  }
+
+  // Replay entire conversation history via session updates
+  for (final message in session.history) {
+    await _connection.sessionUpdate(
+      SessionNotification(
+        sessionId: params.sessionId,
+        update: message,
+      ),
+    );
+  }
+
+  return LoadSessionResponse(
+    modes: session.modeState,
+    models: session.modelState,
+  );
+}
+```
+
+<Note>
+When loading a session, you MUST stream the entire conversation history back to the client via `session/update` notifications before returning the response.
+</Note>
+
+### prompt
+
+Processes a user prompt and generates a response.
+
+**When called**: When the user sends a message in a session
+
+**Responsibilities**:
+- Process the user's prompt
+- Call language models
+- Execute tool calls
+- Request permissions for sensitive operations
+- Stream progress updates
+- Return with appropriate stop reason
+
+```dart
+@override
+Future<PromptResponse> prompt(PromptRequest params) async {
+  final session = _sessions[params.sessionId];
+  if (session == null) {
+    throw RequestError.resourceNotFound(params.sessionId);
+  }
+
+  try {
+    // Send initial thinking
+    await _connection.sessionUpdate(
+      SessionNotification(
+        sessionId: params.sessionId,
+        update: AgentThoughtChunkSessionUpdate(
+          content: TextContentBlock(
+            text: 'Analyzing the request...',
+          ),
+        ),
+      ),
+    );
+
+    // Call language model
+    final response = await callLanguageModel(params.prompt);
+
+    // Stream response chunks
+    for (final chunk in response.chunks) {
+      await _connection.sessionUpdate(
+        SessionNotification(
+          sessionId: params.sessionId,
+          update: AgentMessageChunkSessionUpdate(
+            content: TextContentBlock(text: chunk),
+          ),
+        ),
+      );
+    }
+
+    // Execute tool calls if needed
+    for (final tool in response.toolCalls) {
+      await executeToolCall(params.sessionId, tool);
+    }
+
+    return PromptResponse(
+      stopReason: StopReason.endTurn,
+      usage: Usage(
+        inputTokens: response.inputTokens,
+        outputTokens: response.outputTokens,
+        totalTokens: response.totalTokens,
+      ),
+    );
+  } catch (e) {
+    if (session.cancelled) {
+      return PromptResponse(stopReason: StopReason.cancelled);
+    }
+    rethrow;
+  }
+}
+```
+
+### cancel
+
+Cancels ongoing operations in a session.
+
+**When called**: When the user cancels an in-progress prompt
+
+**Responsibilities**:
+- Stop language model requests
+- Abort tool executions
+- Send final updates
+- Respond to pending prompt with `StopReason.cancelled`
+
+```dart
+@override
+Future<void> cancel(CancelNotification params) async {
+  final session = _sessions[params.sessionId];
+  if (session != null && session.pendingPrompt != null) {
+    session.cancelled = true;
+    session.pendingPrompt?.complete();
+  }
+}
+```
+
+## Sending Session Updates
+
+Agents communicate progress to clients via `session/update` notifications:
+
+### Message Chunks
+
+```dart
+// Agent response text
+await _connection.sessionUpdate(
+  SessionNotification(
+    sessionId: sessionId,
+    update: AgentMessageChunkSessionUpdate(
+      content: TextContentBlock(text: 'Here is the solution...'),
+    ),
+  ),
+);
+
+// Agent internal thoughts
+await _connection.sessionUpdate(
+  SessionNotification(
+    sessionId: sessionId,
+    update: AgentThoughtChunkSessionUpdate(
+      content: TextContentBlock(text: 'Analyzing code structure...'),
+    ),
+  ),
+);
+```
+
+### Tool Calls
+
+```dart
+// Create a new tool call
+await _connection.sessionUpdate(
+  SessionNotification(
+    sessionId: sessionId,
+    update: ToolCallSessionUpdate(
+      toolCallId: 'call_1',
+      title: 'Reading file',
+      kind: ToolKind.read,
+      status: ToolCallStatus.pending,
+      locations: [ToolCallLocation(path: '/src/main.dart')],
+      rawInput: {'path': '/src/main.dart'},
+    ),
+  ),
+);
+
+// Update the tool call with results
+await _connection.sessionUpdate(
+  SessionNotification(
+    sessionId: sessionId,
+    update: ToolCallUpdateSessionUpdate(
+      toolCallId: 'call_1',
+      status: ToolCallStatus.completed,
+      content: [
+        ContentToolCallContent(
+          content: TextContentBlock(text: fileContents),
+        ),
+      ],
+      rawOutput: {'content': fileContents},
+    ),
+  ),
+);
+```
+
+### Plans
+
+```dart
+await _connection.sessionUpdate(
+  SessionNotification(
+    sessionId: sessionId,
+    update: PlanSessionUpdate(
+      entries: [
+        PlanEntry(
+          content: 'Analyze current code structure',
+          priority: PlanEntryPriority.high,
+          status: PlanEntryStatus.completed,
+        ),
+        PlanEntry(
+          content: 'Refactor into smaller functions',
+          priority: PlanEntryPriority.high,
+          status: PlanEntryStatus.inProgress,
+        ),
+        PlanEntry(
+          content: 'Add unit tests',
+          priority: PlanEntryPriority.medium,
+          status: PlanEntryStatus.pending,
+        ),
+      ],
+    ),
+  ),
+);
+```
+
+## Requesting Client Operations
+
+Agents can call methods on the client to perform operations:
+
+### File Operations
+
+```dart
+// Read a file
+final content = await _connection.readTextFile(
+  ReadTextFileRequest(
+    sessionId: sessionId,
+    path: '/src/config.json',
+  ),
+);
+
+// Write a file
+await _connection.writeTextFile(
+  WriteTextFileRequest(
+    sessionId: sessionId,
+    path: '/src/output.txt',
+    content: 'Generated content',
+  ),
+);
+```
+
+### Permission Requests
+
+```dart
+final permission = await _connection.requestPermission(
+  RequestPermissionRequest(
+    sessionId: sessionId,
+    options: [
+      PermissionOption(
+        optionId: 'allow',
+        name: 'Allow this change',
+        kind: PermissionOptionKind.allowOnce,
+      ),
+      PermissionOption(
+        optionId: 'reject',
+        name: 'Skip this change',
+        kind: PermissionOptionKind.rejectOnce,
+      ),
+    ],
+    toolCall: ToolCallUpdate(
+      toolCallId: 'call_2',
+      title: 'Delete configuration file',
+      kind: ToolKind.delete,
+      status: ToolCallStatus.pending,
+    ),
+  ),
+);
+
+// Handle the response
+switch (permission.outcome) {
+  case SelectedOutcome(optionId: 'allow'):
+    await performDeletion();
+  case SelectedOutcome(optionId: 'reject'):
+    await skipOperation();
+  case CancelledOutcome():
+    return PromptResponse(stopReason: StopReason.cancelled);
+}
+```
+
+### Terminal Operations
+
+```dart
+// Create a terminal
+final terminal = await _connection.createTerminal(
+  CreateTerminalRequest(
+    sessionId: sessionId,
+    command: 'npm',
+    args: ['test'],
+    cwd: '/project',
+  ),
+);
+
+// Wait for completion
+final exit = await _connection.waitForTerminalExit(
+  WaitForTerminalExitRequest(
+    sessionId: sessionId,
+    terminalId: terminal.terminalId,
+  ),
+);
+
+// Get output
+final output = await _connection.terminalOutput(
+  TerminalOutputRequest(
+    sessionId: sessionId,
+    terminalId: terminal.terminalId,
+  ),
+);
+
+// Release resources
+await _connection.releaseTerminal(
+  ReleaseTerminalRequest(
+    sessionId: sessionId,
+    terminalId: terminal.terminalId,
+  ),
+);
+```
+
+## Session Modes
+
+Modes allow agents to operate in different ways with different system prompts and behaviors:
+
+```dart
+@override
+Future<SetSessionModeResponse?>? setSessionMode(
+  SetSessionModeRequest params,
+) async {
+  final session = _sessions[params.sessionId];
+  if (session == null) {
+    throw RequestError.resourceNotFound(params.sessionId);
+  }
+
+  session.currentMode = params.modeId;
+
+  // Update system prompt based on mode
+  switch (params.modeId) {
+    case 'ask':
+      session.systemPrompt = 'You are a helpful Q&A assistant.';
+    case 'code':
+      session.systemPrompt = 'You are an expert coding assistant.';
+    case 'architect':
+      session.systemPrompt = 'You are a software architect.';
+  }
+
+  return SetSessionModeResponse();
+}
+```
+
+## Best Practices
+
+<Tip>
+**Stream updates frequently**: Send session updates regularly to provide real-time feedback to users.
+</Tip>
+
+<Tip>
+**Handle cancellation gracefully**: Always check for cancellation during long-running operations and clean up properly.
+</Tip>
+
+<Tip>
+**Request permission for sensitive operations**: Use `requestPermission` for destructive actions like deleting files or modifying critical code.
+</Tip>
+
+<Tip>
+**Provide detailed tool call information**: Include `locations` to help clients implement "follow-along" features.
+</Tip>
+
+## Example: Complete Agent
+
+See the [example agent implementation](/examples/basic-agent) for a complete, runnable example.
+
+## Next Steps
+
+<CardGroup cols={2}>
+  <Card title="Sessions" icon="layer-group" href="/concepts/sessions">
+    Learn about session management
+  </Card>
+  <Card title="Connections" icon="plug" href="/concepts/connections">
+    Understand connection handling
+  </Card>
+</CardGroup>

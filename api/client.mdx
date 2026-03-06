@@ -1,0 +1,372 @@
+---
+title: 'Client'
+description: 'Abstract base class defining the Client interface for ACP connections'
+---
+
+## Overview
+
+The `Client` abstract class defines the core interface that clients must implement to handle requests from agents in the ACP protocol. Clients are responsible for managing the user interface, handling file system operations, managing terminals, requesting user permissions, and displaying session updates.
+
+## Class Definition
+
+```dart
+abstract class Client
+```
+
+Clients implement this interface to handle:
+- Permission requests from agents
+- Session update notifications and progress
+- File system operations (reading and writing files)
+- Terminal management (creation, output, termination)
+
+## Methods
+
+### requestPermission
+
+Requests permission from the user for a tool call operation.
+
+```dart
+Future<RequestPermissionResponse> requestPermission(
+  RequestPermissionRequest params,
+)
+```
+
+Called by the agent when it needs user authorization before executing a potentially sensitive operation. The client should present the options to the user and return their decision.
+
+If the client cancels the prompt turn via `session/cancel`, it MUST respond to this request with `RequestPermissionOutcome::Cancelled`.
+
+<ParamField path="params" type="RequestPermissionRequest" required>
+  The permission request containing tool call details and available options
+</ParamField>
+
+<ResponseField name="RequestPermissionResponse" type="RequestPermissionResponse">
+  Contains the user's decision (allow, deny, or cancelled)
+</ResponseField>
+
+### sessionUpdate
+
+Handles session update notifications from the agent.
+
+```dart
+Future<void> sessionUpdate(SessionNotification params)
+```
+
+This is a notification endpoint (no response expected) that receives real-time updates about session progress, including message chunks, tool calls, and execution plans.
+
+**Note:** Clients SHOULD continue accepting tool call updates even after sending a `session/cancel` notification, as the agent may send final updates before responding with the cancelled stop reason.
+
+<ParamField path="params" type="SessionNotification" required>
+  Notification containing session updates, messages, and tool call information
+</ParamField>
+
+## File System Methods
+
+These methods are only available if the client advertises the corresponding file system capabilities.
+
+### writeTextFile
+
+Writes content to a text file in the client's file system.
+
+```dart
+Future<WriteTextFileResponse>? writeTextFile(WriteTextFileRequest params)
+```
+
+Only available if the client advertises the `fs.writeTextFile` capability. Allows the agent to create or modify files within the client's environment.
+
+<ParamField path="params" type="WriteTextFileRequest" required>
+  Request containing the file path and content to write
+</ParamField>
+
+<ResponseField name="WriteTextFileResponse" type="WriteTextFileResponse" optional>
+  Returns `null` if not supported, otherwise confirms the write operation
+</ResponseField>
+
+### readTextFile
+
+Reads content from a text file in the client's file system.
+
+```dart
+Future<ReadTextFileResponse>? readTextFile(ReadTextFileRequest params)
+```
+
+Only available if the client advertises the `fs.readTextFile` capability. Allows the agent to access file contents within the client's environment.
+
+<ParamField path="params" type="ReadTextFileRequest" required>
+  Request containing the file path to read
+</ParamField>
+
+<ResponseField name="ReadTextFileResponse" type="ReadTextFileResponse" optional>
+  Returns `null` if not supported, otherwise contains the file content
+</ResponseField>
+
+## Terminal Methods
+
+These methods are only available if the client advertises the `terminal` capability as `true`.
+
+### createTerminal
+
+Creates a new terminal to execute a command.
+
+```dart
+Future<CreateTerminalResponse>? createTerminal(CreateTerminalRequest params)
+```
+
+Only available if the `terminal` capability is set to `true`. The Agent must call `releaseTerminal` when done with the terminal to free resources.
+
+<ParamField path="params" type="CreateTerminalRequest" required>
+  Request containing the command to execute and terminal configuration
+</ParamField>
+
+<ResponseField name="CreateTerminalResponse" type="CreateTerminalResponse" optional>
+  Returns `null` if not supported, otherwise contains the terminal ID
+</ResponseField>
+
+### terminalOutput
+
+Gets the current output and exit status of a terminal.
+
+```dart
+Future<TerminalOutputResponse>? terminalOutput(TerminalOutputRequest params)
+```
+
+Returns immediately without waiting for the command to complete. If the command has already exited, the exit status is included.
+
+<ParamField path="params" type="TerminalOutputRequest" required>
+  Request containing the session ID and terminal ID
+</ParamField>
+
+<ResponseField name="TerminalOutputResponse" type="TerminalOutputResponse" optional>
+  Returns `null` if not supported, otherwise contains stdout, stderr, and exit status
+</ResponseField>
+
+### releaseTerminal
+
+Releases a terminal and frees all associated resources.
+
+```dart
+Future<ReleaseTerminalResponse?>? releaseTerminal(
+  ReleaseTerminalRequest params,
+)
+```
+
+The command is killed if it hasn't exited yet. After release, the terminal ID becomes invalid for all other terminal methods.
+
+Tool calls that already contain the terminal ID continue to display its output.
+
+<ParamField path="params" type="ReleaseTerminalRequest" required>
+  Request containing the session ID and terminal ID to release
+</ParamField>
+
+<ResponseField name="ReleaseTerminalResponse" type="ReleaseTerminalResponse" optional>
+  Returns `null` if not supported, otherwise confirms the terminal was released
+</ResponseField>
+
+### waitForTerminalExit
+
+Waits for a terminal command to exit and returns its exit status.
+
+```dart
+Future<WaitForTerminalExitResponse>? waitForTerminalExit(
+  WaitForTerminalExitRequest params,
+)
+```
+
+This method returns once the command completes, providing the exit code and/or signal that terminated the process.
+
+<ParamField path="params" type="WaitForTerminalExitRequest" required>
+  Request containing the session ID and terminal ID
+</ParamField>
+
+<ResponseField name="WaitForTerminalExitResponse" type="WaitForTerminalExitResponse" optional>
+  Returns `null` if not supported, otherwise contains the exit code and signal
+</ResponseField>
+
+### killTerminal
+
+Kills a terminal command without releasing the terminal.
+
+```dart
+Future<KillTerminalCommandResponse?>? killTerminal(
+  KillTerminalCommandRequest params,
+)
+```
+
+While `releaseTerminal` also kills the command, this method keeps the terminal ID valid so it can be used with other methods.
+
+Useful for implementing command timeouts that terminate the command and then retrieve the final output.
+
+**Note:** Call `releaseTerminal` when the terminal is no longer needed.
+
+<ParamField path="params" type="KillTerminalCommandRequest" required>
+  Request containing the session ID and terminal ID to kill
+</ParamField>
+
+<ResponseField name="KillTerminalCommandResponse" type="KillTerminalCommandResponse" optional>
+  Returns `null` if not supported, otherwise confirms the terminal was killed
+</ResponseField>
+
+## Extension Methods
+
+### extMethod
+
+Allows the Agent to send an arbitrary request that is not part of the ACP spec.
+
+```dart
+Future<Map<String, dynamic>>? extMethod(
+  String method,
+  Map<String, dynamic> params,
+)
+```
+
+The method name is sent exactly as provided and is not rewritten. ACP reserves extension methods under the `_` prefix, so callers should include the leading underscore explicitly when needed.
+
+<ParamField path="method" type="String" required>
+  The extension method name (should start with `_` for ACP-reserved extensions)
+</ParamField>
+
+<ParamField path="params" type="Map<String, dynamic>" required>
+  Arbitrary parameters for the extension method
+</ParamField>
+
+<ResponseField name="result" type="Map<String, dynamic>" optional>
+  Returns `null` if not supported, otherwise the extension method response
+</ResponseField>
+
+### extNotification
+
+Allows the Agent to send an arbitrary notification that is not part of the ACP spec.
+
+```dart
+Future<void>? extNotification(String method, Map<String, dynamic> params)
+```
+
+<ParamField path="method" type="String" required>
+  The extension notification name
+</ParamField>
+
+<ParamField path="params" type="Map<String, dynamic>" required>
+  Arbitrary parameters for the extension notification
+</ParamField>
+
+## Usage Example
+
+```dart
+import 'package:acp_dart/acp_dart.dart';
+
+class MyClient implements Client {
+  @override
+  Future<RequestPermissionResponse> requestPermission(
+    RequestPermissionRequest params,
+  ) async {
+    // Show permission dialog to user
+    final userChoice = await showPermissionDialog(
+      toolName: params.tool,
+      description: params.description,
+    );
+    
+    return RequestPermissionResponse(
+      outcome: userChoice ? 
+        RequestPermissionOutcome.allow : 
+        RequestPermissionOutcome.deny,
+    );
+  }
+
+  @override
+  Future<void> sessionUpdate(SessionNotification params) async {
+    // Update UI with session progress
+    updateChatDisplay(params);
+  }
+
+  @override
+  Future<ReadTextFileResponse>? readTextFile(
+    ReadTextFileRequest params,
+  ) async {
+    final content = await File(params.path).readAsString();
+    return ReadTextFileResponse(content: content);
+  }
+
+  @override
+  Future<WriteTextFileResponse>? writeTextFile(
+    WriteTextFileRequest params,
+  ) async {
+    await File(params.path).writeAsString(params.content);
+    return WriteTextFileResponse(success: true);
+  }
+
+  // Terminal methods (if supported)
+  @override
+  Future<CreateTerminalResponse>? createTerminal(
+    CreateTerminalRequest params,
+  ) async {
+    final terminalId = await startTerminal(params.command);
+    return CreateTerminalResponse(terminalId: terminalId);
+  }
+
+  @override
+  Future<TerminalOutputResponse>? terminalOutput(
+    TerminalOutputRequest params,
+  ) async {
+    final output = await getTerminalOutput(params.terminalId);
+    return output;
+  }
+
+  @override
+  Future<ReleaseTerminalResponse?>? releaseTerminal(
+    ReleaseTerminalRequest params,
+  ) async {
+    await closeTerminal(params.terminalId);
+    return ReleaseTerminalResponse();
+  }
+
+  @override
+  Future<WaitForTerminalExitResponse>? waitForTerminalExit(
+    WaitForTerminalExitRequest params,
+  ) async {
+    final exitCode = await waitForTerminal(params.terminalId);
+    return WaitForTerminalExitResponse(exitCode: exitCode);
+  }
+
+  @override
+  Future<KillTerminalCommandResponse?>? killTerminal(
+    KillTerminalCommandRequest params,
+  ) async {
+    await terminateTerminal(params.terminalId);
+    return KillTerminalCommandResponse();
+  }
+
+  @override
+  Future<Map<String, dynamic>>? extMethod(
+    String method,
+    Map<String, dynamic> params,
+  ) => null;
+
+  @override
+  Future<void>? extNotification(
+    String method,
+    Map<String, dynamic> params,
+  ) => null;
+}
+```
+
+## Capability Advertisement
+
+Clients should advertise their capabilities during the initialization phase:
+
+```dart
+final initRequest = InitializeRequest(
+  protocolVersion: '1.0',
+  capabilities: ClientCapabilities(
+    fs: FileSystemCapabilities(
+      readTextFile: true,
+      writeTextFile: true,
+    ),
+    terminal: true,
+  ),
+);
+```
+
+## See Also
+
+- [Agent](/api/agent) - The agent interface that clients communicate with
+- [ClientSideConnection](/api/client-side-connection) - Implementation of client-side connections
+- [Connection](/api/connection) - Base connection class for JSON-RPC communication

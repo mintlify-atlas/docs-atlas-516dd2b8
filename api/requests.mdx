@@ -1,0 +1,516 @@
+---
+title: "Requests"
+description: "Request types sent from clients to agents"
+---
+
+## Overview
+
+Request types represent messages sent from clients to agents that expect a response. Each request has a corresponding response type.
+
+## Initialize
+
+Establishes the connection with a client and negotiates protocol capabilities.
+
+### InitializeRequest
+
+<ParamField path="protocolVersion" type="int" required>
+  The protocol version the client supports
+</ParamField>
+
+<ParamField path="clientInfo" type="Implementation">
+  Information about the client implementation
+  
+  <Expandable title="Implementation fields">
+    <ResponseField name="name" type="string" required>
+      The name of the implementation
+    </ResponseField>
+    
+    <ResponseField name="version" type="string" required>
+      The version of the implementation
+    </ResponseField>
+    
+    <ResponseField name="title" type="string">
+      A human-readable title for the implementation
+    </ResponseField>
+    
+    <ResponseField name="_meta" type="Map<String, dynamic>">
+      Optional metadata
+    </ResponseField>
+  </Expandable>
+</ParamField>
+
+<ParamField path="clientCapabilities" type="ClientCapabilities">
+  Capabilities advertised by the client
+  
+  <Expandable title="ClientCapabilities fields">
+    <ResponseField name="terminal" type="bool" default="false">
+      Whether the client supports terminal operations
+    </ResponseField>
+    
+    <ResponseField name="fs" type="FileSystemCapability">
+      File system capabilities
+      
+      <Expandable title="FileSystemCapability fields">
+        <ResponseField name="readTextFile" type="bool" default="false">
+          Whether the client supports reading text files
+        </ResponseField>
+        
+        <ResponseField name="writeTextFile" type="bool" default="false">
+          Whether the client supports writing text files
+        </ResponseField>
+      </Expandable>
+    </ResponseField>
+  </Expandable>
+</ParamField>
+
+<ParamField path="_meta" type="Map<String, dynamic>">
+  Optional metadata for the request
+</ParamField>
+
+## Authentication
+
+### AuthenticateRequest
+
+Authenticates the client using the specified authentication method.
+
+<ParamField path="methodId" type="String" required>
+  The ID of the authentication method to use (from the agent's advertised auth methods)
+</ParamField>
+
+<ParamField path="_meta" type="Map<String, dynamic>">
+  Optional metadata
+</ParamField>
+
+## Session Management
+
+### NewSessionRequest
+
+Creates a new conversation session with the agent.
+
+<ParamField path="cwd" type="String" required>
+  The current working directory for the session
+</ParamField>
+
+<ParamField path="mcpServers" type="List<McpServerBase>" required>
+  List of MCP servers to connect to. Can be `HttpMcpServer`, `SseMcpServer`, or `StdioMcpServer`
+</ParamField>
+
+<ParamField path="_meta" type="Map<String, dynamic>">
+  Optional metadata
+</ParamField>
+
+### LoadSessionRequest
+
+Loads an existing session to resume a previous conversation.
+
+<ParamField path="sessionId" type="String" required>
+  The ID of the session to load
+</ParamField>
+
+<ParamField path="cwd" type="String" required>
+  The current working directory for the session
+</ParamField>
+
+<ParamField path="mcpServers" type="List<McpServerBase>" required>
+  List of MCP servers to connect to
+</ParamField>
+
+<ParamField path="_meta" type="Map<String, dynamic>">
+  Optional metadata
+</ParamField>
+
+### ListSessionsRequest
+
+<Warning>**UNSTABLE:** This capability is not part of the spec yet, and may be removed or changed at any point.</Warning>
+
+Lists existing sessions from the agent.
+
+<ParamField path="cursor" type="String">
+  Pagination cursor for fetching the next page of results
+</ParamField>
+
+<ParamField path="cwd" type="String">
+  Filter sessions by current working directory
+</ParamField>
+
+<ParamField path="_meta" type="Map<String, dynamic>">
+  Optional metadata
+</ParamField>
+
+### ForkSessionRequest
+
+<Warning>**UNSTABLE:** This capability is not part of the spec yet, and may be removed or changed at any point.</Warning>
+
+Forks an existing session to create a new independent session.
+
+<ParamField path="sessionId" type="SessionId" required>
+  The ID of the session to fork
+</ParamField>
+
+<ParamField path="cwd" type="String" required>
+  The current working directory for the new session
+</ParamField>
+
+<ParamField path="mcpServers" type="List<McpServerBase>">
+  Optional list of MCP servers for the forked session
+</ParamField>
+
+<ParamField path="_meta" type="Map<String, dynamic>">
+  Optional metadata
+</ParamField>
+
+### ResumeSessionRequest
+
+<Warning>**UNSTABLE:** This capability is not part of the spec yet, and may be removed or changed at any point.</Warning>
+
+Resumes an existing session without replaying previous messages.
+
+<ParamField path="sessionId" type="SessionId" required>
+  The ID of the session to resume
+</ParamField>
+
+<ParamField path="cwd" type="String" required>
+  The current working directory for the session
+</ParamField>
+
+<ParamField path="mcpServers" type="List<McpServerBase>">
+  Optional list of MCP servers
+</ParamField>
+
+<ParamField path="_meta" type="Map<String, dynamic>">
+  Optional metadata
+</ParamField>
+
+### SetSessionModeRequest
+
+Sets the operational mode for a session.
+
+<ParamField path="sessionId" type="String" required>
+  The ID of the session
+</ParamField>
+
+<ParamField path="modeId" type="String" required>
+  The ID of the mode to set (must be from availableModes)
+</ParamField>
+
+<ParamField path="_meta" type="Map<String, dynamic>">
+  Optional metadata
+</ParamField>
+
+### SetSessionConfigOptionRequest
+
+Sets the current value for a session configuration option.
+
+<ParamField path="sessionId" type="SessionId" required>
+  The ID of the session
+</ParamField>
+
+<ParamField path="configId" type="SessionConfigId" required>
+  The ID of the configuration option to set
+</ParamField>
+
+<ParamField path="value" type="SessionConfigValueId" required>
+  The new value for the configuration option
+</ParamField>
+
+<ParamField path="_meta" type="Map<String, dynamic>">
+  Optional metadata
+</ParamField>
+
+### SetSessionModelRequest
+
+<Warning>**UNSTABLE:** This capability is not part of the spec yet, and may be removed or changed at any point.</Warning>
+
+Selects the model for a given session.
+
+<ParamField path="sessionId" type="String" required>
+  The ID of the session
+</ParamField>
+
+<ParamField path="modelId" type="String" required>
+  The ID of the model to use
+</ParamField>
+
+<ParamField path="_meta" type="Map<String, dynamic>">
+  Optional metadata
+</ParamField>
+
+## Prompt
+
+### PromptRequest
+
+Processes a user prompt within a session. See [User Message](https://agentclientprotocol.com/protocol/prompt-turn#1-user-message).
+
+<ParamField path="sessionId" type="String" required>
+  The ID of the session this prompt belongs to
+</ParamField>
+
+<ParamField path="prompt" type="List<ContentBlock>" required>
+  Structured content blocks representing the user's message. Can include text, images, audio, resources, etc.
+</ParamField>
+
+<ParamField path="_meta" type="Map<String, dynamic>">
+  Optional metadata
+</ParamField>
+
+## File System
+
+### WriteTextFileRequest
+
+Writes content to a text file in the client's file system.
+
+<ParamField path="sessionId" type="String" required>
+  The ID of the session
+</ParamField>
+
+<ParamField path="path" type="String" required>
+  The file path to write to
+</ParamField>
+
+<ParamField path="content" type="String" required>
+  The text content to write
+</ParamField>
+
+<ParamField path="_meta" type="Map<String, dynamic>">
+  Optional metadata
+</ParamField>
+
+### ReadTextFileRequest
+
+Reads content from a text file in the client's file system.
+
+<ParamField path="sessionId" type="String" required>
+  The ID of the session
+</ParamField>
+
+<ParamField path="path" type="String" required>
+  The file path to read from
+</ParamField>
+
+<ParamField path="line" type="int">
+  Optional starting line number (0-based)
+</ParamField>
+
+<ParamField path="limit" type="int">
+  Optional maximum number of lines to read
+</ParamField>
+
+<ParamField path="_meta" type="Map<String, dynamic>">
+  Optional metadata
+</ParamField>
+
+## Permissions
+
+### RequestPermissionRequest
+
+Requests permission from the user for a tool call operation.
+
+<ParamField path="sessionId" type="String" required>
+  The ID of the session
+</ParamField>
+
+<ParamField path="options" type="List<PermissionOption>" required>
+  Available permission options to present to the user
+  
+  <Expandable title="PermissionOption fields">
+    <ResponseField name="optionId" type="String" required>
+      Unique identifier for this option
+    </ResponseField>
+    
+    <ResponseField name="name" type="String" required>
+      Display name for the option
+    </ResponseField>
+    
+    <ResponseField name="kind" type="PermissionOptionKind" required>
+      The kind of permission: `allow_once`, `allow_always`, `reject_once`, or `reject_always`
+    </ResponseField>
+  </Expandable>
+</ParamField>
+
+<ParamField path="toolCall" type="ToolCallUpdate" required>
+  Information about the tool call requesting permission
+</ParamField>
+
+<ParamField path="_meta" type="Map<String, dynamic>">
+  Optional metadata
+</ParamField>
+
+## Terminal
+
+### CreateTerminalRequest
+
+Creates a new terminal and executes a command.
+
+<ParamField path="sessionId" type="String" required>
+  The ID of the session
+</ParamField>
+
+<ParamField path="command" type="String" required>
+  The command to execute in the terminal
+</ParamField>
+
+<ParamField path="args" type="List<String>">
+  Arguments to pass to the command
+</ParamField>
+
+<ParamField path="cwd" type="String">
+  Working directory for the command (defaults to current directory)
+</ParamField>
+
+<ParamField path="env" type="List<EnvVariable>">
+  Environment variables to set for the command
+  
+  <Expandable title="EnvVariable fields">
+    <ResponseField name="name" type="String" required>
+      The environment variable name
+    </ResponseField>
+    
+    <ResponseField name="value" type="String" required>
+      The environment variable value
+    </ResponseField>
+  </Expandable>
+</ParamField>
+
+<ParamField path="outputByteLimit" type="int">
+  Optional limit for terminal output bytes returned in responses
+</ParamField>
+
+<ParamField path="_meta" type="Map<String, dynamic>">
+  Optional metadata
+</ParamField>
+
+### TerminalOutputRequest
+
+Gets the current output and exit status of a terminal.
+
+<ParamField path="sessionId" type="String" required>
+  The ID of the session
+</ParamField>
+
+<ParamField path="terminalId" type="String" required>
+  The ID of the terminal
+</ParamField>
+
+<ParamField path="_meta" type="Map<String, dynamic>">
+  Optional metadata
+</ParamField>
+
+### ReleaseTerminalRequest
+
+Releases a terminal and frees all associated resources.
+
+<ParamField path="sessionId" type="String" required>
+  The ID of the session
+</ParamField>
+
+<ParamField path="terminalId" type="String" required>
+  The ID of the terminal to release
+</ParamField>
+
+<ParamField path="_meta" type="Map<String, dynamic>">
+  Optional metadata
+</ParamField>
+
+### WaitForTerminalExitRequest
+
+Waits for a terminal command to exit and returns its exit status.
+
+<ParamField path="sessionId" type="String" required>
+  The ID of the session
+</ParamField>
+
+<ParamField path="terminalId" type="String" required>
+  The ID of the terminal
+</ParamField>
+
+<ParamField path="_meta" type="Map<String, dynamic>">
+  Optional metadata
+</ParamField>
+
+### KillTerminalCommandRequest
+
+Kills a terminal command without releasing the terminal.
+
+<ParamField path="sessionId" type="String" required>
+  The ID of the session
+</ParamField>
+
+<ParamField path="terminalId" type="String" required>
+  The ID of the terminal
+</ParamField>
+
+<ParamField path="_meta" type="Map<String, dynamic>">
+  Optional metadata
+</ParamField>
+
+## MCP Server Types
+
+### HttpMcpServer
+
+HTTP-based MCP server configuration.
+
+<ParamField path="type" type="String" default="http">
+  Server type (always "http")
+</ParamField>
+
+<ParamField path="name" type="String" required>
+  Name of the MCP server
+</ParamField>
+
+<ParamField path="url" type="String" required>
+  The HTTP URL for the server
+</ParamField>
+
+<ParamField path="headers" type="List<HttpHeader>" required>
+  HTTP headers to include with requests
+  
+  <Expandable title="HttpHeader fields">
+    <ResponseField name="name" type="String" required>
+      The header name
+    </ResponseField>
+    
+    <ResponseField name="value" type="String" required>
+      The header value
+    </ResponseField>
+  </Expandable>
+</ParamField>
+
+### SseMcpServer
+
+Server-Sent Events based MCP server configuration.
+
+<ParamField path="type" type="String" default="sse">
+  Server type (always "sse")
+</ParamField>
+
+<ParamField path="name" type="String" required>
+  Name of the MCP server
+</ParamField>
+
+<ParamField path="url" type="String" required>
+  The SSE URL for the server
+</ParamField>
+
+<ParamField path="headers" type="List<HttpHeader>" required>
+  HTTP headers to include with the SSE connection
+</ParamField>
+
+### StdioMcpServer
+
+Stdio-based MCP server configuration.
+
+<ParamField path="name" type="String" required>
+  Name of the MCP server
+</ParamField>
+
+<ParamField path="command" type="String" required>
+  The command to execute
+</ParamField>
+
+<ParamField path="args" type="List<String>" required>
+  Arguments for the command
+</ParamField>
+
+<ParamField path="env" type="List<EnvVariable>" required>
+  Environment variables for the command
+</ParamField>

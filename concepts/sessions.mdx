@@ -1,0 +1,769 @@
+---
+title: Sessions
+description: Understanding session lifecycle, state management, and conversation context in ACP
+---
+
+## What is a Session?
+
+A **session** in ACP represents an independent conversation context between a client and an agent. Each session maintains:
+
+- Conversation history (messages, tool calls, results)
+- Current working directory
+- Connected MCP servers
+- Session-specific configuration
+- Current mode and model settings
+
+```dart
+typedef SessionId = String;
+
+class SessionState {
+  final String sessionId;
+  final String cwd;
+  final List<McpServerBase> mcpServers;
+  final List<Message> history;
+  final String currentMode;
+  final String currentModel;
+  // ...
+}
+```
+
+## Session Lifecycle
+
+### 1. Session Creation
+
+Clients create new sessions with `session/new`:
+
+```dart
+final session = await connection.newSession(
+  NewSessionRequest(
+    cwd: '/path/to/workspace',
+    mcpServers: [
+      StdioMcpServer(
+        name: 'filesystem',
+        command: 'mcp-server-filesystem',
+        args: ['--workspace', '/path/to/workspace'],
+        env: [],
+      ),
+      HttpMcpServer(
+        name: 'api-docs',
+        url: 'https://api.example.com/mcp',
+        headers: [
+          HttpHeader(name: 'Authorization', value: 'Bearer token'),
+        ],
+      ),
+    ],
+  ),
+);
+
+print('Session ID: ${session.sessionId}');
+print('Available modes: ${session.modes?.availableModes}');
+print('Current mode: ${session.modes?.currentModeId}');
+```
+
+**Response includes**:
+- Unique `sessionId` for all future requests
+- Available modes and current mode
+- Available models and current model
+- Configuration options (if any)
+
+```dart
+class NewSessionResponse {
+  final String sessionId;
+  final SessionModeState? modes;
+  final SessionModelState? models;
+  final List<SessionConfigOption>? configOptions;
+}
+```
+
+### 2. Session Usage
+
+Once created, clients send prompts to the session:
+
+```dart
+final result = await connection.prompt(
+  PromptRequest(
+    sessionId: session.sessionId,
+    prompt: [
+      TextContentBlock(text: 'Refactor this function'),
+      ResourceContentBlock(
+        resource: EmbeddedResource(
+          resource: TextResourceContents(
+            uri: 'file:///src/main.dart',
+            text: fileContents,
+          ),
+        ),
+      ),
+    ],
+  ),
+);
+```
+
+The agent processes the prompt and streams updates back:
+
+```dart
+// In your Client implementation
+@override
+Future<void> sessionUpdate(SessionNotification params) async {
+  if (params.sessionId == currentSessionId) {
+    // Handle update for this session
+    handleUpdate(params.update);
+  }
+}
+```
+
+### 3. Session Persistence
+
+Agents can implement session persistence to restore conversations:
+
+```dart
+// Load existing session
+final loaded = await connection.loadSession(
+  LoadSessionRequest(
+    sessionId: 'previous-session-id',
+    cwd: '/path/to/workspace',
+    mcpServers: [],
+  ),
+);
+
+// Agent streams entire conversation history
+// via session/update notifications before responding
+```
+
+<Note>
+Only implement `loadSession` if your agent advertises the `loadSession` capability during initialization.
+</Note>
+
+## Session Modes
+
+**Modes** allow agents to operate with different behaviors, system prompts, and tool availability.
+
+### Mode State
+
+```dart
+class SessionModeState {
+  final List<SessionMode> availableModes;
+  final String currentModeId;
+}
+
+class SessionMode {
+  final String id;           // e.g., "code", "ask", "architect"
+  final String name;         // Display name
+  final String? description; // User-facing description
+}
+```
+
+### Defining Modes
+
+Agents declare available modes when creating sessions:
+
+```dart
+@override
+Future<NewSessionResponse> newSession(NewSessionRequest params) async {
+  return NewSessionResponse(
+    sessionId: generateId(),
+    modes: SessionModeState(
+      availableModes: [
+        SessionMode(
+          id: 'ask',
+          name: 'Ask',
+          description: 'Q&A mode for answering questions',
+        ),
+        SessionMode(
+          id: 'code',
+          name: 'Code',
+          description: 'Full coding mode with file modifications',
+        ),
+        SessionMode(
+          id: 'architect',
+          name: 'Architect',
+          description: 'High-level design and planning',
+        ),
+      ],
+      currentModeId: 'code',
+    ),
+  );
+}
+```
+
+### Changing Modes
+
+Clients can change modes at any time:
+
+```dart
+await connection.setSessionMode(
+  SetSessionModeRequest(
+    sessionId: sessionId,
+    modeId: 'architect',
+  ),
+);
+```
+
+Agents can also autonomously change modes and notify the client:
+
+```dart
+// Agent decides to switch modes
+await _connection.sessionUpdate(
+  SessionNotification(
+    sessionId: sessionId,
+    update: CurrentModeUpdateSessionUpdate(
+      currentModeId: 'code',
+    ),
+  ),
+);
+```
+
+<Tip>
+Use modes to adjust system prompts, available tools, and permission policies. For example, "ask" mode might be read-only, while "code" mode allows file modifications.
+</Tip>
+
+## Session Models
+
+**Models** represent different AI models the agent can use.
+
+### Model State
+
+```dart
+class SessionModelState {
+  final List<ModelInfo> availableModels;
+  final String currentModelId;
+}
+
+class ModelInfo {
+  final String modelId;      // e.g., "gpt-4", "claude-3-opus"
+  final String name;         // Display name
+  final String? description; // User-facing description
+}
+```
+
+### Defining Models
+
+```dart
+@override
+Future<NewSessionResponse> newSession(NewSessionRequest params) async {
+  return NewSessionResponse(
+    sessionId: generateId(),
+    models: SessionModelState(
+      availableModels: [
+        ModelInfo(
+          modelId: 'gpt-4',
+          name: 'GPT-4',
+          description: 'Most capable model',
+        ),
+        ModelInfo(
+          modelId: 'gpt-4-turbo',
+          name: 'GPT-4 Turbo',
+          description: 'Faster, cost-effective',
+        ),
+        ModelInfo(
+          modelId: 'claude-3-opus',
+          name: 'Claude 3 Opus',
+          description: 'Anthropic\'s most capable model',
+        ),
+      ],
+      currentModelId: 'gpt-4',
+    ),
+  );
+}
+```
+
+### Changing Models
+
+```dart
+// Client requests model change (unstable)
+await connection.setSessionModel(
+  SetSessionModelRequest(
+    sessionId: sessionId,
+    modelId: 'claude-3-opus',
+  ),
+);
+```
+
+<Info>
+The `session/set_model` method is currently unstable and may change in future versions.
+</Info>
+
+## Session Configuration
+
+**Configuration options** allow agents to expose session-specific settings.
+
+### Configuration Structure
+
+```dart
+class SessionConfigOption {
+  final String id;               // Unique identifier
+  final String name;             // Display name
+  final String? description;     // Help text
+  final String? category;        // Grouping category
+  final String type;             // Currently only "select"
+  final String currentValue;     // Current selected value
+  final SessionConfigSelectOptions options; // Available options
+}
+```
+
+### Ungrouped Options
+
+```dart
+SessionConfigOption(
+  id: 'temperature',
+  name: 'Temperature',
+  description: 'Controls randomness in responses',
+  type: 'select',
+  currentValue: 'medium',
+  options: UngroupedSessionConfigSelectOptions(
+    options: [
+      SessionConfigSelectOption(
+        value: 'low',
+        name: 'Low (0.3)',
+        description: 'More focused and deterministic',
+      ),
+      SessionConfigSelectOption(
+        value: 'medium',
+        name: 'Medium (0.7)',
+        description: 'Balanced',
+      ),
+      SessionConfigSelectOption(
+        value: 'high',
+        name: 'High (1.0)',
+        description: 'More creative and random',
+      ),
+    ],
+  ),
+)
+```
+
+### Grouped Options
+
+```dart
+SessionConfigOption(
+  id: 'tools',
+  name: 'Available Tools',
+  description: 'Select which tools the agent can use',
+  type: 'select',
+  currentValue: 'read-write',
+  options: GroupedSessionConfigSelectOptions(
+    groups: [
+      SessionConfigSelectGroup(
+        group: 'filesystem',
+        name: 'Filesystem',
+        options: [
+          SessionConfigSelectOption(
+            value: 'read-only',
+            name: 'Read Only',
+          ),
+          SessionConfigSelectOption(
+            value: 'read-write',
+            name: 'Read & Write',
+          ),
+        ],
+      ),
+      SessionConfigSelectGroup(
+        group: 'terminal',
+        name: 'Terminal',
+        options: [
+          SessionConfigSelectOption(
+            value: 'disabled',
+            name: 'Disabled',
+          ),
+          SessionConfigSelectOption(
+            value: 'enabled',
+            name: 'Enabled',
+          ),
+        ],
+      ),
+    ],
+  ),
+)
+```
+
+### Updating Configuration
+
+```dart
+final response = await connection.setSessionConfigOption(
+  SetSessionConfigOptionRequest(
+    sessionId: sessionId,
+    configId: 'temperature',
+    value: 'high',
+  ),
+);
+
+// Response includes complete updated configuration
+print('Updated config: ${response.configOptions}');
+```
+
+## MCP Server Integration
+
+Sessions connect to **Model Context Protocol (MCP)** servers to provide additional capabilities.
+
+### Server Types
+
+#### Stdio Servers
+
+```dart
+StdioMcpServer(
+  name: 'filesystem',
+  command: 'mcp-server-filesystem',
+  args: ['--workspace', '/path'],
+  env: [
+    EnvVariable(name: 'DEBUG', value: 'true'),
+  ],
+)
+```
+
+#### HTTP Servers
+
+```dart
+HttpMcpServer(
+  name: 'api-docs',
+  url: 'https://api.example.com/mcp',
+  headers: [
+    HttpHeader(name: 'Authorization', value: 'Bearer token'),
+    HttpHeader(name: 'X-API-Version', value: '2'),
+  ],
+)
+```
+
+#### SSE Servers
+
+```dart
+SseMcpServer(
+  name: 'realtime',
+  url: 'https://events.example.com/stream',
+  headers: [
+    HttpHeader(name: 'Authorization', value: 'Bearer token'),
+  ],
+)
+```
+
+### Connecting Servers
+
+Agents receive MCP servers in `newSession` and `loadSession` requests:
+
+```dart
+@override
+Future<NewSessionResponse> newSession(NewSessionRequest params) async {
+  // Connect to each MCP server
+  for (final server in params.mcpServers) {
+    if (server is StdioMcpServer) {
+      await connectStdioServer(server);
+    } else if (server is HttpMcpServer) {
+      await connectHttpServer(server);
+    } else if (server is SseMcpServer) {
+      await connectSseServer(server);
+    }
+  }
+  
+  // Return session info
+  return NewSessionResponse(sessionId: generateId());
+}
+```
+
+<Tip>
+Advertise which MCP transport types you support via `AgentCapabilities.mcpCapabilities` during initialization.
+</Tip>
+
+## Session Updates
+
+Agents stream real-time progress via `session/update` notifications:
+
+### Update Types
+
+```dart
+abstract class SessionUpdate {}
+
+// Message chunks
+class UserMessageChunkSessionUpdate extends SessionUpdate {
+  final ContentBlock content;
+}
+
+class AgentMessageChunkSessionUpdate extends SessionUpdate {
+  final ContentBlock content;
+}
+
+class AgentThoughtChunkSessionUpdate extends SessionUpdate {
+  final ContentBlock content;
+}
+
+// Tool calls
+class ToolCallSessionUpdate extends SessionUpdate {
+  final String toolCallId;
+  final String title;
+  final ToolKind? kind;
+  final ToolCallStatus? status;
+  final List<ToolCallLocation>? locations;
+  final Map<String, dynamic>? rawInput;
+  final Map<String, dynamic>? rawOutput;
+  final List<ToolCallContent>? content;
+}
+
+class ToolCallUpdateSessionUpdate extends SessionUpdate {
+  final String toolCallId;
+  final String? title;
+  final ToolCallStatus? status;
+  final List<ToolCallContent>? content;
+  // ...
+}
+
+// Execution plan
+class PlanSessionUpdate extends SessionUpdate {
+  final List<PlanEntry> entries;
+}
+
+// State changes
+class CurrentModeUpdateSessionUpdate extends SessionUpdate {
+  final String currentModeId;
+}
+
+class AvailableCommandsUpdateSessionUpdate extends SessionUpdate {
+  final List<AvailableCommand> availableCommands;
+}
+
+class ConfigOptionUpdate extends SessionUpdate {
+  final List<SessionConfigOption> configOptions;
+}
+
+class SessionInfoUpdate extends SessionUpdate {
+  final String? title;
+  final String? updatedAt;
+}
+
+class UsageUpdate extends SessionUpdate {
+  final int used;
+  final int size;
+  final Cost? cost;
+}
+```
+
+### Sending Updates
+
+```dart
+// Send agent response
+await connection.sessionUpdate(
+  SessionNotification(
+    sessionId: sessionId,
+    update: AgentMessageChunkSessionUpdate(
+      content: TextContentBlock(text: 'Here is the solution...'),
+    ),
+  ),
+);
+
+// Report tool execution
+await connection.sessionUpdate(
+  SessionNotification(
+    sessionId: sessionId,
+    update: ToolCallSessionUpdate(
+      toolCallId: 'call_1',
+      title: 'Reading configuration',
+      kind: ToolKind.read,
+      status: ToolCallStatus.inProgress,
+      locations: [ToolCallLocation(path: '/config/app.json')],
+    ),
+  ),
+);
+
+// Update tool status
+await connection.sessionUpdate(
+  SessionNotification(
+    sessionId: sessionId,
+    update: ToolCallUpdateSessionUpdate(
+      toolCallId: 'call_1',
+      status: ToolCallStatus.completed,
+      content: [
+        ContentToolCallContent(
+          content: TextContentBlock(text: jsonContent),
+        ),
+      ],
+    ),
+  ),
+);
+```
+
+## Advanced Session Management (Unstable)
+
+The SDK supports additional unstable session operations:
+
+### Listing Sessions
+
+```dart
+final sessions = await connection.unstableListSessions(
+  ListSessionsRequest(
+    cwd: '/workspace',
+    cursor: nextCursor,
+  ),
+);
+
+for (final session in sessions.sessions) {
+  print('${session.sessionId}: ${session.title}');
+  print('  Last updated: ${session.updatedAt}');
+  print('  Working dir: ${session.cwd}');
+}
+
+if (sessions.nextCursor != null) {
+  // Fetch next page
+}
+```
+
+### Forking Sessions
+
+Create a new session branched from an existing one:
+
+```dart
+final forked = await connection.unstableForkSession(
+  ForkSessionRequest(
+    sessionId: existingSessionId,
+    cwd: '/workspace',
+    mcpServers: [],
+  ),
+);
+
+print('Forked to: ${forked.sessionId}');
+```
+
+### Resuming Sessions
+
+Resume a session without replaying history:
+
+```dart
+final resumed = await connection.unstableResumeSession(
+  ResumeSessionRequest(
+    sessionId: existingSessionId,
+    cwd: '/workspace',
+  ),
+);
+```
+
+<Note>
+Unstable features may change or be removed in future versions. Use with caution in production.
+</Note>
+
+## Session Cancellation
+
+Clients can cancel ongoing prompt processing:
+
+```dart
+// User clicks "Stop"
+await connection.cancel(
+  CancelNotification(sessionId: sessionId),
+);
+
+// Agent receives notification and:
+// 1. Stops LLM requests
+// 2. Aborts tool executions
+// 3. Sends final updates
+// 4. Responds with StopReason.cancelled
+```
+
+Agents should handle cancellation gracefully:
+
+```dart
+@override
+Future<PromptResponse> prompt(PromptRequest params) async {
+  final session = _sessions[params.sessionId]!;
+  
+  try {
+    // Long-running operation
+    while (!session.cancelled && hasMoreWork) {
+      await doWork();
+    }
+    
+    if (session.cancelled) {
+      return PromptResponse(stopReason: StopReason.cancelled);
+    }
+    
+    return PromptResponse(stopReason: StopReason.endTurn);
+  } catch (e) {
+    rethrow;
+  }
+}
+
+@override
+Future<void> cancel(CancelNotification params) async {
+  final session = _sessions[params.sessionId];
+  if (session != null) {
+    session.cancelled = true;
+    session.pendingOperations.forEach((op) => op.cancel());
+  }
+}
+```
+
+## Best Practices
+
+<Tip>
+**Generate unique session IDs**: Use UUIDs or similar to ensure uniqueness across restarts.
+</Tip>
+
+<Tip>
+**Persist session state**: Store conversation history to enable session loading and resumption.
+</Tip>
+
+<Tip>
+**Stream updates frequently**: Keep clients informed of progress with regular session updates.
+</Tip>
+
+<Tip>
+**Handle mode changes gracefully**: Adjust behavior, system prompts, and available tools based on the current mode.
+</Tip>
+
+<Tip>
+**Clean up sessions**: Remove inactive sessions periodically to free resources.
+</Tip>
+
+<Tip>
+**Validate session IDs**: Always check that session IDs exist before operating on them.
+</Tip>
+
+## Example: Complete Session Management
+
+```dart
+class SessionManager {
+  final Map<String, Session> _sessions = {};
+  
+  Future<NewSessionResponse> createSession(
+    NewSessionRequest request,
+  ) async {
+    final sessionId = Uuid().v4();
+    
+    final session = Session(
+      id: sessionId,
+      cwd: request.cwd,
+      history: [],
+      currentMode: 'code',
+      createdAt: DateTime.now(),
+    );
+    
+    // Connect MCP servers
+    for (final server in request.mcpServers) {
+      session.mcpServers.add(await connectMcpServer(server));
+    }
+    
+    _sessions[sessionId] = session;
+    
+    return NewSessionResponse(
+      sessionId: sessionId,
+      modes: SessionModeState(
+        availableModes: getAvailableModes(),
+        currentModeId: 'code',
+      ),
+    );
+  }
+  
+  Session? getSession(String sessionId) {
+    return _sessions[sessionId];
+  }
+  
+  void removeSession(String sessionId) {
+    final session = _sessions.remove(sessionId);
+    session?.cleanup();
+  }
+}
+```
+
+## Next Steps
+
+<CardGroup cols={2}>
+  <Card title="Protocol Overview" icon="book" href="/concepts/protocol-overview">
+    Learn about the overall protocol
+  </Card>
+  <Card title="Agents" icon="robot" href="/concepts/agents">
+    Implement an ACP agent
+  </Card>
+</CardGroup>

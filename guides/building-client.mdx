@@ -1,0 +1,364 @@
+---
+title: Building a Client
+description: Step-by-step guide to implementing an ACP client in Dart
+---
+
+This guide walks you through building an ACP client that connects to agents, sends prompts, and handles responses.
+
+## Overview
+
+A client is the application that:
+- Initiates connections to agents
+- Sends user prompts and requests
+- Handles permission requests from agents
+- Provides file system and terminal access
+- Displays session updates to users
+
+## Prerequisites
+
+Add the ACP Dart SDK to your `pubspec.yaml`:
+
+```yaml
+dependencies:
+  acp_dart: ^1.0.0
+```
+
+## Implementation Steps
+
+<Steps>
+
+### Create your Client class
+
+Implement the `Client` abstract class to handle agent requests:
+
+```dart
+import 'dart:io';
+import 'package:acp_dart/acp_dart.dart';
+
+class MyClient implements Client {
+  @override
+  Future<RequestPermissionResponse> requestPermission(
+    RequestPermissionRequest params,
+  ) async {
+    // Display permission dialog to user
+    print('Permission requested: ${params.toolCall.title}');
+    
+    for (int i = 0; i < params.options.length; i++) {
+      final option = params.options[i];
+      print('  ${i + 1}. ${option.name}');
+    }
+    
+    // Get user's choice
+    stdout.write('Choose an option: ');
+    final choice = stdin.readLineSync();
+    final index = int.tryParse(choice ?? '') ?? 0;
+    
+    if (index > 0 && index <= params.options.length) {
+      return RequestPermissionResponse(
+        outcome: SelectedOutcome(
+          optionId: params.options[index - 1].optionId,
+        ),
+      );
+    }
+    
+    return RequestPermissionResponse(
+      outcome: CancelledOutcome(),
+    );
+  }
+
+  @override
+  Future<void> sessionUpdate(SessionNotification params) async {
+    // Handle different types of session updates
+    final update = params.update;
+    
+    if (update is AgentMessageChunkSessionUpdate) {
+      if (update.content is TextContentBlock) {
+        print((update.content as TextContentBlock).text);
+      }
+    } else if (update is ToolCallSessionUpdate) {
+      print('🔧 ${update.title} (${update.status})');
+    } else if (update is ToolCallUpdateSessionUpdate) {
+      print('Tool call ${update.toolCallId}: ${update.status}');
+    }
+  }
+
+  // Implement other required methods...
+}
+```
+
+### Implement file system operations
+
+Provide file access to the agent:
+
+```dart
+@override
+Future<ReadTextFileResponse> readTextFile(
+  ReadTextFileRequest params,
+) async {
+  try {
+    final file = File(params.path);
+    final content = await file.readAsString();
+    
+    return ReadTextFileResponse(content: content);
+  } catch (e) {
+    throw RequestError.resourceNotFound(params.path);
+  }
+}
+
+@override
+Future<WriteTextFileResponse> writeTextFile(
+  WriteTextFileRequest params,
+) async {
+  try {
+    final file = File(params.path);
+    await file.writeAsString(params.content);
+    
+    return WriteTextFileResponse();
+  } catch (e) {
+    throw RequestError.internalError('Failed to write file: $e');
+  }
+}
+```
+
+### Implement terminal operations
+
+Enable the agent to execute commands:
+
+```dart
+final Map<String, Process> _terminals = {};
+
+@override
+Future<CreateTerminalResponse> createTerminal(
+  CreateTerminalRequest params,
+) async {
+  final terminalId = _generateTerminalId();
+  
+  final process = await Process.start(
+    params.command,
+    params.args ?? [],
+    workingDirectory: params.cwd,
+    environment: params.env?.fold<Map<String, String>>(
+      {},
+      (map, env) {
+        map[env.name] = env.value;
+        return map;
+      },
+    ),
+  );
+  
+  _terminals[terminalId] = process;
+  
+  return CreateTerminalResponse(terminalId: terminalId);
+}
+
+@override
+Future<TerminalOutputResponse> terminalOutput(
+  TerminalOutputRequest params,
+) async {
+  final process = _terminals[params.terminalId];
+  
+  if (process == null) {
+    throw RequestError.resourceNotFound('Terminal ${params.terminalId}');
+  }
+  
+  // Read current output
+  final output = await process.stdout.transform(utf8.decoder).join();
+  final exitCode = await process.exitCode.timeout(
+    Duration.zero,
+    onTimeout: () => null,
+  );
+  
+  return TerminalOutputResponse(
+    output: output,
+    exitStatus: exitCode != null
+        ? TerminalExitStatus(exitCode: exitCode)
+        : null,
+    truncated: false,
+  );
+}
+
+@override
+Future<WaitForTerminalExitResponse> waitForTerminalExit(
+  WaitForTerminalExitRequest params,
+) async {
+  final process = _terminals[params.terminalId];
+  
+  if (process == null) {
+    throw RequestError.resourceNotFound('Terminal ${params.terminalId}');
+  }
+  
+  final exitCode = await process.exitCode;
+  
+  return WaitForTerminalExitResponse(exitCode: exitCode);
+}
+
+@override
+Future<ReleaseTerminalResponse> releaseTerminal(
+  ReleaseTerminalRequest params,
+) async {
+  final process = _terminals.remove(params.terminalId);
+  
+  if (process != null) {
+    process.kill();
+  }
+  
+  return ReleaseTerminalResponse();
+}
+
+@override
+Future<KillTerminalCommandResponse> killTerminal(
+  KillTerminalCommandRequest params,
+) async {
+  final process = _terminals[params.terminalId];
+  
+  if (process != null) {
+    process.kill();
+  }
+  
+  return KillTerminalCommandResponse();
+}
+```
+
+### Connect to an agent
+
+Establish the connection and initialize the protocol:
+
+```dart
+import 'dart:io';
+import 'package:acp_dart/acp_dart.dart';
+
+Future<void> main() async {
+  // Spawn the agent as a subprocess
+  final agentProcess = await Process.start('dart', [
+    'run',
+    'path/to/agent.dart',
+  ]);
+
+  // Create the client
+  final client = MyClient();
+  
+  // Create NDJSON stream
+  final stream = ndJsonStream(
+    agentProcess.stdout,
+    agentProcess.stdin,
+  );
+  
+  // Create the client-side connection
+  final connection = ClientSideConnection(
+    (agent) => client,
+    stream,
+  );
+
+  // Initialize the connection
+  final initResult = await connection.initialize(
+    InitializeRequest(
+      protocolVersion: 1,
+      clientCapabilities: ClientCapabilities(
+        fs: FileSystemCapability(
+          readTextFile: true,
+          writeTextFile: true,
+        ),
+        terminal: true,
+      ),
+    ),
+  );
+
+  print('Connected to agent (protocol v${initResult.protocolVersion})');
+}
+```
+
+### Create a session and send prompts
+
+Start a conversation with the agent:
+
+```dart
+// Create a new session
+final sessionResult = await connection.newSession(
+  NewSessionRequest(
+    cwd: Directory.current.path,
+    mcpServers: [
+      HttpMcpServer(
+        name: 'docs',
+        url: 'https://example.com',
+        headers: const [],
+      ),
+    ],
+  ),
+);
+
+print('Created session: ${sessionResult.sessionId}');
+
+// Send a prompt
+final promptResult = await connection.prompt(
+  PromptRequest(
+    sessionId: sessionResult.sessionId,
+    prompt: [
+      TextContentBlock(text: 'Hello, please analyze my project'),
+    ],
+  ),
+);
+
+print('Agent completed with stop reason: ${promptResult.stopReason}');
+```
+
+### Cancel ongoing operations
+
+Cancel a prompt turn if needed:
+
+```dart
+// Send cancellation notification
+await connection.cancel(
+  CancelNotification(sessionId: sessionId),
+);
+```
+
+</Steps>
+
+## Extension Methods
+
+Implement custom protocol extensions:
+
+```dart
+@override
+Future<Map<String, dynamic>>? extMethod(
+  String method,
+  Map<String, dynamic> params,
+) async {
+  if (method == '_custom_analyze') {
+    // Handle custom method
+    return {'result': 'analysis complete'};
+  }
+  
+  throw RequestError.methodNotFound(method);
+}
+
+@override
+Future<void>? extNotification(
+  String method,
+  Map<String, dynamic> params,
+) async {
+  if (method == '_custom_notification') {
+    // Handle custom notification
+    print('Custom notification: $params');
+  }
+}
+```
+
+## Complete Example
+
+See the full example in the repository:
+
+```bash
+dart run example/client.dart
+```
+
+## Next Steps
+
+<CardGroup cols={2}>
+  <Card title="File System Operations" icon="folder" href="/guides/file-system-operations">
+    Learn about file system capabilities
+  </Card>
+  <Card title="Terminal Operations" icon="terminal" href="/guides/terminal-operations">
+    Execute and manage terminal commands
+  </Card>
+</CardGroup>

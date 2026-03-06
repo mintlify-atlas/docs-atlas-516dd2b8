@@ -1,0 +1,304 @@
+---
+title: "Stream"
+description: "NDJSON stream utilities for ACP communication"
+---
+
+## Overview
+
+The stream module provides utilities for creating bidirectional ACP streams using newline-delimited JSON (NDJSON) encoding. This is the standard way to handle ACP connections over stdio and other byte-oriented transports.
+
+## AcpStream
+
+The core stream interface for ACP connections.
+
+<ResponseField name="AcpStream" type="class">
+  Bidirectional stream interface for ACP connections
+  
+  <Expandable title="Properties">
+    <ResponseField name="readable" type="Stream<Map<String, dynamic>>">
+      Stream of incoming messages from the peer
+    </ResponseField>
+    <ResponseField name="writable" type="StreamSink<Map<String, dynamic>>">
+      Sink for sending messages to the peer
+    </ResponseField>
+  </Expandable>
+</ResponseField>
+
+### Constructor
+
+```dart
+AcpStream({
+  required Stream<Map<String, dynamic>> readable,
+  required StreamSink<Map<String, dynamic>> writable,
+})
+```
+
+<ParamField path="readable" type="Stream<Map<String, dynamic>>" required>
+  The readable stream to receive decoded messages from
+</ParamField>
+
+<ParamField path="writable" type="StreamSink<Map<String, dynamic>>" required>
+  The writable sink to send encoded messages to
+</ParamField>
+
+## ndJsonStream
+
+Creates an ACP stream from newline-delimited JSON byte streams.
+
+```dart
+AcpStream ndJsonStream(
+  Stream<List<int>> input,
+  StreamSink<List<int>> output, {
+  void Function(String line, Object error)? onParseError,
+})
+```
+
+<ParamField path="input" type="Stream<List<int>>" required>
+  The readable byte stream to receive encoded messages from (typically `stdin`)
+</ParamField>
+
+<ParamField path="output" type="StreamSink<List<int>>" required>
+  The writable byte sink to send encoded messages to (typically `stdout`)
+</ParamField>
+
+<ParamField path="onParseError" type="void Function(String line, Object error)?">
+  Optional callback invoked when a non-empty line cannot be parsed as JSON. Use this to log parse errors without disrupting the stream.
+</ParamField>
+
+### Returns
+
+An `AcpStream` for bidirectional ACP communication with automatic NDJSON encoding/decoding.
+
+## Behavior
+
+### Readable Stream
+
+The readable stream:
+1. Decodes bytes to UTF-8 strings
+2. Splits on newlines
+3. Trims whitespace
+4. Skips empty lines
+5. Parses JSON objects
+6. Calls `onParseError` for invalid JSON (if provided)
+7. Continues processing after errors
+
+<Note>
+The stream **skips malformed lines** and continues processing subsequent messages. This ensures one bad message doesn't break the entire connection.
+</Note>
+
+### Writable Stream
+
+The writable stream:
+1. Encodes messages to JSON
+2. Appends newline character
+3. Encodes to UTF-8 bytes
+4. Writes to output sink
+
+## Usage Examples
+
+### Basic Usage (stdio)
+
+```dart
+import 'dart:io';
+import 'package:acp_dart/acp_dart.dart';
+
+void main() {
+  // Create stream from stdin/stdout
+  final stream = ndJsonStream(stdin, stdout);
+  
+  // Use with AgentSideConnection
+  final connection = AgentSideConnection(
+    (conn) => MyAgent(conn),
+    stream,
+  );
+  
+  // Connection now handles all communication
+}
+```
+
+### With Error Logging
+
+```dart
+import 'dart:io';
+import 'package:acp_dart/acp_dart.dart';
+
+void main() {
+  // Log parse errors to stderr
+  final stream = ndJsonStream(
+    stdin,
+    stdout,
+    onParseError: (line, error) {
+      stderr.writeln('Failed to parse message: $line');
+      stderr.writeln('Error: $error');
+    },
+  );
+  
+  final connection = AgentSideConnection(
+    (conn) => MyAgent(conn),
+    stream,
+  );
+}
+```
+
+### Custom Stream Source
+
+```dart
+import 'dart:async';
+import 'dart:io';
+import 'package:acp_dart/acp_dart.dart';
+
+void main() async {
+  // Connect to a remote ACP server via socket
+  final socket = await Socket.connect('localhost', 8080);
+  
+  final stream = ndJsonStream(
+    socket,
+    socket,
+    onParseError: (line, error) {
+      print('Parse error: $error');
+    },
+  );
+  
+  final connection = ClientSideConnection(
+    (conn) => MyClient(conn),
+    stream,
+  );
+}
+```
+
+### Manual Message Reading
+
+```dart
+import 'dart:io';
+import 'package:acp_dart/acp_dart.dart';
+
+void main() async {
+  final stream = ndJsonStream(stdin, stdout);
+  
+  // Listen to incoming messages
+  stream.readable.listen(
+    (message) {
+      print('Received: ${message['method']}');
+      
+      // Send a response
+      stream.writable.add({
+        'jsonrpc': '2.0',
+        'id': message['id'],
+        'result': {'status': 'ok'},
+      });
+    },
+    onError: (error) {
+      print('Stream error: $error');
+    },
+    onDone: () {
+      print('Stream closed');
+    },
+  );
+}
+```
+
+## Error Handling
+
+### Parse Errors
+
+```dart
+import 'dart:io';
+import 'package:acp_dart/acp_dart.dart';
+
+void main() {
+  final stream = ndJsonStream(
+    stdin,
+    stdout,
+    onParseError: (line, error) {
+      // Log to stderr (doesn't interfere with stdout protocol)
+      stderr.writeln('Parse error on line: $line');
+      
+      if (error is FormatException) {
+        stderr.writeln('Invalid JSON format');
+      } else {
+        stderr.writeln('Error: $error');
+      }
+      
+      // Stream continues processing next messages
+    },
+  );
+  
+  final connection = AgentSideConnection(
+    (conn) => MyAgent(conn),
+    stream,
+  );
+}
+```
+
+<Warning>
+Always use `stderr` for logging when using stdio streams. Writing to `stdout` will corrupt the protocol stream.
+</Warning>
+
+### Encoding Errors
+
+```dart
+import 'dart:io';
+import 'package:acp_dart/acp_dart.dart';
+
+void main() {
+  final stream = ndJsonStream(stdin, stdout);
+  
+  try {
+    // This will fail if the message can't be encoded to JSON
+    stream.writable.add({
+      'invalid': Object(), // Objects can't be serialized
+    });
+  } catch (e) {
+    stderr.writeln('Failed to encode message: $e');
+  }
+}
+```
+
+## Stream Lifecycle
+
+```dart
+import 'dart:async';
+import 'dart:io';
+import 'package:acp_dart/acp_dart.dart';
+
+void main() async {
+  final stream = ndJsonStream(stdin, stdout);
+  
+  // Stream is active and processing messages
+  
+  // When done, close the writable side
+  await stream.writable.close();
+  
+  // The readable side will complete when input closes
+}
+```
+
+## Thread Safety
+
+<Info>
+The `ndJsonStream` implementation uses Dart streams, which are single-subscription by default. Messages are processed sequentially in the order they arrive.
+</Info>
+
+## Performance Considerations
+
+<Tip>
+**Buffering**: The NDJSON stream automatically handles buffering and line splitting, so partial UTF-8 sequences and incomplete lines are handled correctly.
+
+**Backpressure**: Dart streams provide natural backpressure handling. If the consumer is slow, the stream will pause reading until it's ready.
+
+**Memory**: Each message is parsed independently, so memory usage is proportional to individual message size, not total stream size.
+</Tip>
+
+## Related Documentation
+
+<CardGroup cols={3}>
+  <Card title="AgentSideConnection" icon="robot" href="/api/agent-side-connection">
+    Using streams with agents
+  </Card>
+  <Card title="ClientSideConnection" icon="desktop" href="/api/client-side-connection">
+    Using streams with clients
+  </Card>
+  <Card title="Connection" icon="network-wired" href="/api/connection">
+    Base connection class
+  </Card>
+</CardGroup>

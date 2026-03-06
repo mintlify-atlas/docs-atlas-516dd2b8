@@ -1,0 +1,469 @@
+---
+title: 'ClientSideConnection'
+description: 'Client-side connection implementation for ACP communication'
+---
+
+## Overview
+
+The `ClientSideConnection` class provides the client's view of an ACP connection, allowing clients (such as code editors) to communicate with agents. It implements the `Agent` interface and manages the bidirectional JSON-RPC communication channel.
+
+## Class Definition
+
+```dart
+class ClientSideConnection implements Agent
+```
+
+This class:
+- Wraps the low-level `Connection` for client-to-agent communication
+- Routes incoming agent requests to the appropriate `Client` handler methods
+- Provides methods for clients to call agent endpoints (sessions, prompts, authentication)
+- Handles protocol-level concerns like request validation and method routing
+
+## Constructor
+
+### ClientSideConnection
+
+Creates a new client-side connection to an agent.
+
+```dart
+ClientSideConnection(
+  Client Function(ClientSideConnection) toAgent,
+  AcpStream stream,
+)
+```
+
+This establishes the communication channel between a client and agent following the ACP specification.
+
+<ParamField path="toAgent" type="Client Function(ClientSideConnection)" required>
+  A function that creates a Client handler to process incoming agent requests. The function receives the connection instance and returns a Client implementation.
+</ParamField>
+
+<ParamField path="stream" type="AcpStream" required>
+  The bidirectional message stream for communication. Typically created using `ndJsonStream` for stdio-based connections.
+</ParamField>
+
+## Agent Interface Methods
+
+The following methods implement the `Agent` interface and allow clients to make requests to the agent.
+
+### initialize
+
+Establishes the connection with an agent and negotiates protocol capabilities.
+
+```dart
+Future<InitializeResponse> initialize(InitializeRequest params)
+```
+
+<ParamField path="params" type="InitializeRequest" required>
+  The initialization request containing protocol version and client capabilities
+</ParamField>
+
+<ResponseField name="InitializeResponse" type="InitializeResponse">
+  Contains the agent's protocol version, capabilities, and available authentication methods
+</ResponseField>
+
+### newSession
+
+Creates a new conversation session with the agent.
+
+```dart
+Future<NewSessionResponse> newSession(NewSessionRequest params)
+```
+
+<ParamField path="params" type="NewSessionRequest" required>
+  Request parameters for creating a new session
+</ParamField>
+
+<ResponseField name="NewSessionResponse" type="NewSessionResponse">
+  Contains the unique session ID and session configuration
+</ResponseField>
+
+### loadSession
+
+Loads an existing session to resume a previous conversation.
+
+```dart
+Future<LoadSessionResponse>? loadSession(LoadSessionRequest params)
+```
+
+<ParamField path="params" type="LoadSessionRequest" required>
+  Request parameters containing the session ID to load
+</ParamField>
+
+<ResponseField name="LoadSessionResponse" type="LoadSessionResponse" optional>
+  Contains loaded session information
+</ResponseField>
+
+### prompt
+
+Sends a user prompt to the agent for processing.
+
+```dart
+Future<PromptResponse> prompt(PromptRequest params)
+```
+
+<ParamField path="params" type="PromptRequest" required>
+  The prompt request containing session ID, messages, and context
+</ParamField>
+
+<ResponseField name="PromptResponse" type="PromptResponse">
+  Contains the final stop reason and any result data
+</ResponseField>
+
+### cancel
+
+Cancels ongoing operations for a session.
+
+```dart
+Future<void> cancel(CancelNotification params)
+```
+
+<ParamField path="params" type="CancelNotification" required>
+  Notification containing the session ID to cancel
+</ParamField>
+
+## Session Management Methods
+
+### setSessionMode
+
+Sets the operational mode for a session.
+
+```dart
+Future<SetSessionModeResponse?>? setSessionMode(SetSessionModeRequest params)
+```
+
+<ParamField path="params" type="SetSessionModeRequest" required>
+  Request containing the session ID and desired mode
+</ParamField>
+
+<ResponseField name="SetSessionModeResponse" type="SetSessionModeResponse" optional>
+  Confirms the mode change
+</ResponseField>
+
+### setSessionConfigOption
+
+Sets the current value for a session configuration option.
+
+```dart
+Future<SetSessionConfigOptionResponse> setSessionConfigOption(
+  SetSessionConfigOptionRequest params,
+)
+```
+
+<ParamField path="params" type="SetSessionConfigOptionRequest" required>
+  Request containing the session ID, option key, and new value
+</ParamField>
+
+<ResponseField name="SetSessionConfigOptionResponse" type="SetSessionConfigOptionResponse">
+  Contains the updated configuration
+</ResponseField>
+
+### authenticate
+
+Authenticates the client using the specified authentication method.
+
+```dart
+Future<AuthenticateResponse?>? authenticate(AuthenticateRequest params)
+```
+
+<ParamField path="params" type="AuthenticateRequest" required>
+  Request containing the authentication method and credentials
+</ParamField>
+
+<ResponseField name="AuthenticateResponse" type="AuthenticateResponse" optional>
+  Confirms authentication success
+</ResponseField>
+
+## Unstable Methods
+
+### unstableListSessions
+
+Lists existing sessions from the agent.
+
+```dart
+Future<ListSessionsResponse> unstableListSessions(
+  ListSessionsRequest params,
+)
+```
+
+<ParamField path="params" type="ListSessionsRequest" required>
+  Request parameters for listing sessions
+</ParamField>
+
+<ResponseField name="ListSessionsResponse" type="ListSessionsResponse">
+  List of available sessions
+</ResponseField>
+
+### unstableForkSession
+
+Forks an existing session to create a new independent session.
+
+```dart
+Future<ForkSessionResponse> unstableForkSession(ForkSessionRequest params)
+```
+
+<ParamField path="params" type="ForkSessionRequest" required>
+  Request containing the source session ID and fork parameters
+</ParamField>
+
+<ResponseField name="ForkSessionResponse" type="ForkSessionResponse">
+  The new forked session information
+</ResponseField>
+
+### unstableResumeSession
+
+Resumes an existing session without replaying previous messages.
+
+```dart
+Future<ResumeSessionResponse> unstableResumeSession(
+  ResumeSessionRequest params,
+)
+```
+
+<ParamField path="params" type="ResumeSessionRequest" required>
+  Request containing the session ID to resume
+</ParamField>
+
+<ResponseField name="ResumeSessionResponse" type="ResumeSessionResponse">
+  The resumed session information
+</ResponseField>
+
+### setSessionModel
+
+Selects the model for a given session.
+
+```dart
+Future<SetSessionModelResponse?>? setSessionModel(
+  SetSessionModelRequest params,
+)
+```
+
+<ParamField path="params" type="SetSessionModelRequest" required>
+  Request containing the session ID and model identifier
+</ParamField>
+
+<ResponseField name="SetSessionModelResponse" type="SetSessionModelResponse" optional>
+  Confirms the model selection
+</ResponseField>
+
+## Extension Methods
+
+### extMethod
+
+Sends an arbitrary request that is not part of the ACP spec.
+
+```dart
+Future<Map<String, dynamic>>? extMethod(
+  String method,
+  Map<String, dynamic> params,
+)
+```
+
+<ParamField path="method" type="String" required>
+  The extension method name
+</ParamField>
+
+<ParamField path="params" type="Map<String, dynamic>" required>
+  Method parameters
+</ParamField>
+
+<ResponseField name="result" type="Map<String, dynamic>" optional>
+  Extension method response
+</ResponseField>
+
+### extNotification
+
+Sends an arbitrary notification that is not part of the ACP spec.
+
+```dart
+Future<void>? extNotification(String method, Map<String, dynamic> params)
+```
+
+<ParamField path="method" type="String" required>
+  The extension notification name
+</ParamField>
+
+<ParamField path="params" type="Map<String, dynamic>" required>
+  Notification parameters
+</ParamField>
+
+## Protocol-Level Methods
+
+### sendCancelRequest
+
+Sends the protocol-level `$/cancel_request` notification.
+
+```dart
+Future<void> sendCancelRequest(CancelRequestNotification params)
+```
+
+<ParamField path="params" type="CancelRequestNotification" required>
+  Cancellation notification with request ID and optional metadata
+</ParamField>
+
+### cancelPendingRequest
+
+Cancels a pending outbound request and sends `$/cancel_request`.
+
+```dart
+Future<bool> cancelPendingRequest(
+  RequestId requestId, {
+  Map<String, dynamic>? meta,
+})
+```
+
+Returns `true` if the request ID was still pending locally.
+
+<ParamField path="requestId" type="RequestId" required>
+  The ID of the request to cancel
+</ParamField>
+
+<ParamField path="meta" type="Map<String, dynamic>" optional>
+  Optional metadata to include in the cancellation notification
+</ParamField>
+
+<ResponseField name="result" type="bool">
+  `true` if the request was pending and was cancelled, `false` otherwise
+</ResponseField>
+
+## Usage Example
+
+```dart
+import 'dart:io';
+import 'package:acp_dart/acp_dart.dart';
+
+class MyClient implements Client {
+  late ClientSideConnection connection;
+
+  @override
+  Future<RequestPermissionResponse> requestPermission(
+    RequestPermissionRequest params,
+  ) async {
+    // Show permission dialog to user
+    print('Agent requests permission: ${params.tool}');
+    return RequestPermissionResponse(
+      outcome: RequestPermissionOutcome.allow,
+    );
+  }
+
+  @override
+  Future<void> sessionUpdate(SessionNotification params) async {
+    // Update UI with session progress
+    print('Session update: $params');
+  }
+
+  @override
+  Future<ReadTextFileResponse>? readTextFile(
+    ReadTextFileRequest params,
+  ) async {
+    final content = await File(params.path).readAsString();
+    return ReadTextFileResponse(content: content);
+  }
+
+  @override
+  Future<WriteTextFileResponse>? writeTextFile(
+    WriteTextFileRequest params,
+  ) async {
+    await File(params.path).writeAsString(params.content);
+    return WriteTextFileResponse(success: true);
+  }
+
+  // ... implement other Client methods
+}
+
+void main() async {
+  // Start an agent process
+  final agentProcess = await Process.start('path/to/agent', []);
+
+  // Create stdio stream for communication
+  final stream = ndJsonStream(
+    stdin: agentProcess.stdout,
+    stdout: agentProcess.stdin,
+  );
+
+  // Create the client-side connection
+  final connection = ClientSideConnection(
+    (conn) {
+      final client = MyClient();
+      client.connection = conn;
+      return client;
+    },
+    stream,
+  );
+
+  // Initialize the connection
+  final initResponse = await connection.initialize(
+    InitializeRequest(
+      protocolVersion: '1.0',
+      capabilities: ClientCapabilities(
+        fs: FileSystemCapabilities(
+          readTextFile: true,
+          writeTextFile: true,
+        ),
+      ),
+    ),
+  );
+
+  print('Connected to agent: ${initResponse.protocolVersion}');
+
+  // Create a new session
+  final session = await connection.newSession(
+    NewSessionRequest(
+      mcpServers: [],
+    ),
+  );
+
+  print('Created session: ${session.sessionId}');
+
+  // Send a prompt
+  final response = await connection.prompt(
+    PromptRequest(
+      sessionId: session.sessionId,
+      messages: [
+        ContentMessage(
+          role: Role.user,
+          content: [TextContent(text: 'Hello, agent!')],
+        ),
+      ],
+    ),
+  );
+
+  print('Prompt complete: ${response.stopReason}');
+}
+```
+
+## Request Routing
+
+The `ClientSideConnection` automatically routes incoming JSON-RPC requests to the appropriate `Client` methods:
+
+<Expandable title="Supported Request Methods">
+  | JSON-RPC Method | Client Method |
+  |----------------|-------------|
+  | `fs/write_text_file` | `writeTextFile()` |
+  | `fs/read_text_file` | `readTextFile()` |
+  | `session/request_permission` | `requestPermission()` |
+  | `terminal/create` | `createTerminal()` |
+  | `terminal/output` | `terminalOutput()` |
+  | `terminal/release` | `releaseTerminal()` |
+  | `terminal/wait_for_exit` | `waitForTerminalExit()` |
+  | `terminal/kill` | `killTerminal()` |
+  | `session/update` | `sessionUpdate()` (notification) |
+  | `$/cancel_request` | `cancelRequest()` (if ProtocolCancellationHandler) |
+  | `_*` (extensions) | `extMethod()` / `extNotification()` |
+</Expandable>
+
+## Error Handling
+
+The connection automatically handles errors and converts them to JSON-RPC error responses:
+
+- Methods returning `null` are treated as not supported and return `MethodNotFound`
+- Unknown methods return `MethodNotFound` errors
+- Protocol-level notifications starting with `$/` may be safely ignored
+- Extension methods/notifications starting with `_` are routed to `extMethod()`/`extNotification()`
+
+## See Also
+
+- [Client](/api/client) - The Client interface implemented by client handlers
+- [Agent](/api/agent) - The Agent interface this class implements
+- [Connection](/api/connection) - The underlying connection class
+- [AgentSideConnection](/api/agent-side-connection) - The agent-side equivalent

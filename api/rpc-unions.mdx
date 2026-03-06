@@ -1,0 +1,326 @@
+---
+title: "RPC Unions"
+description: "Type-safe union types for exhaustive handling of ACP protocol messages"
+---
+
+## Overview
+
+The RPC unions module provides sealed union types that enable exhaustive, type-safe handling of ACP requests, responses, and notifications. These unions ensure you handle all message types correctly and support both standard protocol methods and custom extensions.
+
+## Key Benefits
+
+<CardGroup cols={2}>
+  <Card title="Type Safety" icon="shield-check">
+    Each message type is strongly typed with full IDE support and compile-time checking
+  </Card>
+  <Card title="Exhaustive Handling" icon="list-check">
+    Pattern matching ensures all message types are handled without gaps
+  </Card>
+  <Card title="Forward Compatibility" icon="arrow-up">
+    Unknown methods are captured as extension types for graceful handling
+  </Card>
+  <Card title="Method Discovery" icon="route">
+    Automatic routing from JSON-RPC method names to typed objects
+  </Card>
+</CardGroup>
+
+## Union Types
+
+### Agent Unions
+
+Types used by agents when sending or handling messages:
+
+<ResponseField name="AgentNotificationUnion" type="abstract class">
+  Notifications sent by agents to clients
+  
+  <Expandable title="Variants">
+    <ResponseField name="SessionAgentNotification" type="class">
+      Standard session update notifications containing `SessionNotification`
+    </ResponseField>
+    <ResponseField name="AgentExtensionNotification" type="class">
+      Custom extension notifications with raw payload
+    </ResponseField>
+  </Expandable>
+</ResponseField>
+
+<ResponseField name="AgentRequestUnion" type="abstract class">
+  Requests initiated by agents (handled by clients)
+  
+  <Expandable title="Variants">
+    <ResponseField name="AgentWriteTextFileRequest" type="class">
+      Request to write content to a file (`fs/write_text_file`)
+    </ResponseField>
+    <ResponseField name="AgentReadTextFileRequest" type="class">
+      Request to read content from a file (`fs/read_text_file`)
+    </ResponseField>
+    <ResponseField name="AgentRequestPermissionRequest" type="class">
+      Request user permission for an operation (`session/request_permission`)
+    </ResponseField>
+    <ResponseField name="AgentCreateTerminalRequest" type="class">
+      Request to create a new terminal (`terminal/create`)
+    </ResponseField>
+    <ResponseField name="AgentTerminalOutputRequest" type="class">
+      Request terminal output (`terminal/output`)
+    </ResponseField>
+    <ResponseField name="AgentReleaseTerminalRequest" type="class">
+      Request to release a terminal (`terminal/release`)
+    </ResponseField>
+    <ResponseField name="AgentWaitForTerminalExitRequest" type="class">
+      Request to wait for terminal exit (`terminal/wait_for_exit`)
+    </ResponseField>
+    <ResponseField name="AgentKillTerminalRequest" type="class">
+      Request to kill a terminal command (`terminal/kill`)
+    </ResponseField>
+    <ResponseField name="AgentExtensionMethodRequest" type="class">
+      Custom extension requests with method name and raw params
+    </ResponseField>
+  </Expandable>
+</ResponseField>
+
+<ResponseField name="AgentResponseUnion" type="abstract class">
+  Responses produced by agents for client requests
+  
+  <Expandable title="Variants">
+    <ResponseField name="AgentInitializeResponse" type="class">
+      Response to initialization with protocol version and capabilities
+    </ResponseField>
+    <ResponseField name="AgentNewSessionResponse" type="class">
+      Response to new session creation with session ID
+    </ResponseField>
+    <ResponseField name="AgentLoadSessionResponse" type="class">
+      Response to session load request
+    </ResponseField>
+    <ResponseField name="AgentPromptResponse" type="class">
+      Response to prompt processing with stop reason
+    </ResponseField>
+    <ResponseField name="AgentExtensionMethodResponse" type="class">
+      Custom extension responses
+    </ResponseField>
+  </Expandable>
+</ResponseField>
+
+### Client Unions
+
+Types used by clients when sending or handling messages:
+
+<ResponseField name="ClientRequestUnion" type="abstract class">
+  Requests initiated by clients (handled by agents)
+  
+  <Expandable title="Variants">
+    <ResponseField name="ClientInitializeRequest" type="class">
+      Request to initialize connection (`initialize`)
+    </ResponseField>
+    <ResponseField name="ClientNewSessionRequest" type="class">
+      Request to create new session (`session/new`)
+    </ResponseField>
+    <ResponseField name="ClientLoadSessionRequest" type="class">
+      Request to load existing session (`session/load`)
+    </ResponseField>
+    <ResponseField name="ClientPromptRequest" type="class">
+      Request to process a prompt (`session/prompt`)
+    </ResponseField>
+    <ResponseField name="ClientSetSessionModeRequest" type="class">
+      Request to change session mode (`session/set_mode`)
+    </ResponseField>
+    <ResponseField name="ClientExtensionMethodRequest" type="class">
+      Custom extension requests
+    </ResponseField>
+  </Expandable>
+</ResponseField>
+
+<ResponseField name="ClientResponseUnion" type="abstract class">
+  Responses produced by clients for agent requests
+  
+  <Expandable title="Variants">
+    <ResponseField name="ClientReadTextFileResponse" type="class">
+      Response with file content
+    </ResponseField>
+    <ResponseField name="ClientWriteTextFileResponse" type="class">
+      Response confirming file write
+    </ResponseField>
+    <ResponseField name="ClientRequestPermissionResponse" type="class">
+      Response with user permission decision
+    </ResponseField>
+    <ResponseField name="ClientCreateTerminalResponse" type="class">
+      Response with terminal ID
+    </ResponseField>
+    <ResponseField name="ClientExtensionMethodResponse" type="class">
+      Custom extension responses
+    </ResponseField>
+  </Expandable>
+</ResponseField>
+
+<ResponseField name="ClientNotificationUnion" type="abstract class">
+  Notifications sent by clients to agents
+  
+  <Expandable title="Variants">
+    <ResponseField name="ClientCancelNotification" type="class">
+      Notification to cancel a session prompt (`session/cancel`)
+    </ResponseField>
+    <ResponseField name="ClientExtensionNotification" type="class">
+      Custom extension notifications
+    </ResponseField>
+  </Expandable>
+</ResponseField>
+
+## Usage Examples
+
+### Handling Agent Requests
+
+```dart
+import 'package:acp_dart/acp_dart.dart';
+
+Future<dynamic> handleAgentRequest(String method, dynamic params) async {
+  final request = AgentRequestUnion.fromMethod(method, params);
+  
+  switch (request) {
+    case AgentReadTextFileRequest(params: final p):
+      // Handle file read
+      final content = await readFile(p.path);
+      return ReadTextFileResponse(content: content);
+    
+    case AgentWriteTextFileRequest(params: final p):
+      // Handle file write
+      await writeFile(p.path, p.content);
+      return WriteTextFileResponse();
+    
+    case AgentRequestPermissionRequest(params: final p):
+      // Handle permission request
+      final optionId = await promptUser(p.message, p.options);
+      return RequestPermissionResponse(optionId: optionId);
+    
+    case AgentCreateTerminalRequest(params: final p):
+      // Handle terminal creation
+      final terminalId = await createTerminal(p.command);
+      return CreateTerminalResponse(terminalId: terminalId);
+    
+    case AgentExtensionMethodRequest(methodName: final m, rawParams: final p):
+      // Handle custom extension
+      return handleCustomMethod(m, p);
+    
+    // All other terminal operations...
+    default:
+      throw RequestError.methodNotFound(method);
+  }
+}
+```
+
+### Handling Client Requests
+
+```dart
+import 'package:acp_dart/acp_dart.dart';
+
+Future<dynamic> handleClientRequest(String method, dynamic params) async {
+  final request = ClientRequestUnion.fromMethod(method, params);
+  
+  switch (request) {
+    case ClientInitializeRequest(params: final p):
+      return InitializeResponse(
+        protocolVersion: '0.1.0',
+        capabilities: AgentCapabilities(loadSession: false, auth: []),
+      );
+    
+    case ClientNewSessionRequest(params: final p):
+      final sessionId = createSession(p.mcpServers);
+      return NewSessionResponse(sessionId: sessionId, availableModes: []);
+    
+    case ClientPromptRequest(params: final p):
+      final result = await processPrompt(p.sessionId, p.message);
+      return PromptResponse(stopReason: StopReason.completed);
+    
+    case ClientSetSessionModeRequest(params: final p):
+      await setMode(p.sessionId, p.mode);
+      return SetSessionModeResponse();
+    
+    case ClientExtensionMethodRequest(methodName: final m, rawParams: final p):
+      return handleCustomMethod(m, p);
+    
+    default:
+      throw RequestError.methodNotFound(method);
+  }
+}
+```
+
+### Creating Union Instances
+
+```dart
+import 'package:acp_dart/acp_dart.dart';
+
+// Create a request to read a file
+final readRequest = AgentReadTextFileRequest(
+  ReadTextFileRequest(
+    sessionId: 'session-123',
+    path: '/path/to/file.dart',
+  ),
+);
+
+// Get the method name for JSON-RPC
+print(readRequest.method); // 'fs/read_text_file'
+
+// Serialize to JSON
+final json = readRequest.toJson();
+```
+
+### Pattern Matching with Notifications
+
+```dart
+import 'package:acp_dart/acp_dart.dart';
+
+void handleAgentNotification(dynamic payload) {
+  final notification = AgentNotificationUnion.fromJson(payload);
+  
+  switch (notification) {
+    case SessionAgentNotification(notification: final n):
+      // Handle session update
+      handleSessionUpdate(n);
+    
+    case AgentExtensionNotification(rawPayload: final p):
+      // Handle custom notification
+      handleCustomNotification(p);
+  }
+}
+```
+
+## Method Routing
+
+Each union provides a `fromMethod` factory that automatically routes JSON-RPC methods to the correct union variant:
+
+```dart
+// Automatically creates the right request type
+final request = AgentRequestUnion.fromMethod(
+  'fs/read_text_file',
+  {'sessionId': 'session-1', 'path': '/file.dart'},
+);
+// Returns: AgentReadTextFileRequest
+
+// Unknown methods become extensions
+final extRequest = AgentRequestUnion.fromMethod(
+  '_custom/method',
+  {'custom': 'params'},
+);
+// Returns: AgentExtensionMethodRequest
+```
+
+## Type Safety Benefits
+
+<Note>
+Using RPC unions ensures compile-time safety:
+- **No missing cases**: The compiler warns if you don't handle all variants
+- **No typos**: Method names are checked at compile time
+- **IDE support**: Full autocomplete and type hints
+- **Refactoring**: Easy to update when the protocol changes
+</Note>
+
+## Related Documentation
+
+<CardGroup cols={3}>
+  <Card title="Requests" icon="arrow-right" href="/api/requests">
+    All request types
+  </Card>
+  <Card title="Responses" icon="arrow-left" href="/api/responses">
+    All response types
+  </Card>
+  <Card title="Notifications" icon="bell" href="/api/notifications">
+    All notification types
+  </Card>
+</CardGroup>

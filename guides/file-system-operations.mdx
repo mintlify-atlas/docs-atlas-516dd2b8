@@ -1,0 +1,612 @@
+---
+title: File System Operations
+description: Read and write files through the ACP protocol
+---
+
+This guide covers how to implement file system capabilities that allow agents to read and write files in the client's environment.
+
+## Overview
+
+The ACP file system capability enables:
+- Reading text files from the client's file system
+- Writing text files to the client's file system
+- Proper permission handling and error management
+- Optional line-based reading for large files
+
+## File System Request Types
+
+The SDK provides these file system-related types in `lib/src/schema.dart`:
+
+- `ReadTextFileRequest` - Read contents of a text file
+- `ReadTextFileResponse` - File content response
+- `WriteTextFileRequest` - Write content to a text file
+- `WriteTextFileResponse` - Write operation acknowledgment
+- `FileSystemCapability` - Declares supported file operations
+
+## Enabling File System Capabilities
+
+### Client Side
+
+Advertise file system support during initialization:
+
+```dart
+import 'package:acp_dart/acp_dart.dart';
+
+final connection = ClientSideConnection(
+  (agent) => MyClient(),
+  stream,
+);
+
+final initResult = await connection.initialize(
+  InitializeRequest(
+    protocolVersion: 1,
+    clientCapabilities: ClientCapabilities(
+      fs: FileSystemCapability(
+        readTextFile: true,   // Enable reading
+        writeTextFile: true,  // Enable writing
+      ),
+    ),
+  ),
+);
+```
+
+### Agent Side
+
+Check capabilities before using file operations:
+
+```dart
+@override
+Future<InitializeResponse> initialize(InitializeRequest params) async {
+  final canRead = params.clientCapabilities?.fs?.readTextFile ?? false;
+  final canWrite = params.clientCapabilities?.fs?.writeTextFile ?? false;
+  
+  print('Client supports reading: $canRead');
+  print('Client supports writing: $canWrite');
+  
+  return InitializeResponse(
+    protocolVersion: 1,
+    agentCapabilities: AgentCapabilities(),
+  );
+}
+```
+
+## Agent Side
+
+Agents use file operations through the client connection.
+
+### Reading Files
+
+<Steps>
+
+### Read entire file
+
+Read the complete contents of a file:
+
+```dart
+import 'package:acp_dart/acp_dart.dart';
+
+class MyAgent implements Agent {
+  final AgentSideConnection _connection;
+  
+  Future<String> readFile(String sessionId, String path) async {
+    final response = await _connection.readTextFile(
+      ReadTextFileRequest(
+        sessionId: sessionId,
+        path: path,
+      ),
+    );
+    
+    return response.content;
+  }
+}
+```
+
+### Read file with line offset
+
+Read specific lines from a large file:
+
+```dart
+Future<String> readFileLines(
+  String sessionId,
+  String path, {
+  int? startLine,
+  int? lineLimit,
+}) async {
+  final response = await _connection.readTextFile(
+    ReadTextFileRequest(
+      sessionId: sessionId,
+      path: path,
+      line: startLine,    // Starting line number (0-based)
+      limit: lineLimit,   // Number of lines to read
+    ),
+  );
+  
+  return response.content;
+}
+```
+
+### Report file read as tool call
+
+Notify the client about file operations:
+
+```dart
+Future<void> readAndReport(String sessionId, String path) async {
+  // Report read operation starting
+  await _connection.sessionUpdate(
+    SessionNotification(
+      sessionId: sessionId,
+      update: ToolCallSessionUpdate(
+        toolCallId: 'read_1',
+        title: 'Reading $path',
+        kind: ToolKind.read,
+        status: ToolCallStatus.pending,
+        locations: [
+          ToolCallLocation(path: path),
+        ],
+        rawInput: {'path': path},
+      ),
+    ),
+  );
+  
+  try {
+    // Read the file
+    final response = await _connection.readTextFile(
+      ReadTextFileRequest(
+        sessionId: sessionId,
+        path: path,
+      ),
+    );
+    
+    // Report success
+    await _connection.sessionUpdate(
+      SessionNotification(
+        sessionId: sessionId,
+        update: ToolCallUpdateSessionUpdate(
+          toolCallId: 'read_1',
+          status: ToolCallStatus.completed,
+          content: [
+            ContentToolCallContent(
+              content: TextContentBlock(
+                text: response.content,
+              ),
+            ),
+          ],
+          rawOutput: {'content': response.content},
+        ),
+      ),
+    );
+    
+  } catch (e) {
+    // Report failure
+    await _connection.sessionUpdate(
+      SessionNotification(
+        sessionId: sessionId,
+        update: ToolCallUpdateSessionUpdate(
+          toolCallId: 'read_1',
+          status: ToolCallStatus.failed,
+          content: [
+            ContentToolCallContent(
+              content: TextContentBlock(
+                text: 'Failed to read file: $e',
+              ),
+            ),
+          ],
+        ),
+      ),
+    );
+    rethrow;
+  }
+}
+```
+
+</Steps>
+
+### Writing Files
+
+<Steps>
+
+### Write file content
+
+Write text to a file:
+
+```dart
+Future<void> writeFile(
+  String sessionId,
+  String path,
+  String content,
+) async {
+  await _connection.writeTextFile(
+    WriteTextFileRequest(
+      sessionId: sessionId,
+      path: path,
+      content: content,
+    ),
+  );
+}
+```
+
+### Request permission before writing
+
+Ask user permission for sensitive file writes:
+
+```dart
+Future<void> writeWithPermission(
+  String sessionId,
+  String path,
+  String content,
+) async {
+  // Report the pending write operation
+  await _connection.sessionUpdate(
+    SessionNotification(
+      sessionId: sessionId,
+      update: ToolCallSessionUpdate(
+        toolCallId: 'write_1',
+        title: 'Writing to $path',
+        kind: ToolKind.edit,
+        status: ToolCallStatus.pending,
+        locations: [ToolCallLocation(path: path)],
+        rawInput: {'path': path, 'content': content},
+      ),
+    ),
+  );
+  
+  // Request permission
+  final permissionResponse = await _connection.requestPermission(
+    RequestPermissionRequest(
+      sessionId: sessionId,
+      options: [
+        PermissionOption(
+          optionId: 'allow',
+          name: 'Allow write',
+          kind: PermissionOptionKind.allowOnce,
+        ),
+        PermissionOption(
+          optionId: 'reject',
+          name: 'Cancel',
+          kind: PermissionOptionKind.rejectOnce,
+        ),
+      ],
+      toolCall: ToolCallUpdate(
+        toolCallId: 'write_1',
+        title: 'Writing to $path',
+        kind: ToolKind.edit,
+        status: ToolCallStatus.pending,
+        locations: [ToolCallLocation(path: path)],
+        rawInput: {'path': path, 'preview': content.substring(0, 100)},
+      ),
+    ),
+  );
+  
+  // Handle permission response
+  final outcome = permissionResponse.outcome;
+  switch (outcome) {
+    case SelectedOutcome(optionId: final id) when id == 'allow':
+      // Write the file
+      await _connection.writeTextFile(
+        WriteTextFileRequest(
+          sessionId: sessionId,
+          path: path,
+          content: content,
+        ),
+      );
+      
+      // Update status
+      await _connection.sessionUpdate(
+        SessionNotification(
+          sessionId: sessionId,
+          update: ToolCallUpdateSessionUpdate(
+            toolCallId: 'write_1',
+            status: ToolCallStatus.completed,
+          ),
+        ),
+      );
+      break;
+      
+    case SelectedOutcome(optionId: final id) when id == 'reject':
+    case CancelledOutcome():
+      // Update as failed/cancelled
+      await _connection.sessionUpdate(
+        SessionNotification(
+          sessionId: sessionId,
+          update: ToolCallUpdateSessionUpdate(
+            toolCallId: 'write_1',
+            status: ToolCallStatus.failed,
+            content: [
+              ContentToolCallContent(
+                content: TextContentBlock(
+                  text: 'Write operation cancelled by user',
+                ),
+              ),
+            ],
+          ),
+        ),
+      );
+      break;
+  }
+}
+```
+
+### Report write with diff
+
+Show file changes to the user:
+
+```dart
+await _connection.sessionUpdate(
+  SessionNotification(
+    sessionId: sessionId,
+    update: ToolCallUpdateSessionUpdate(
+      toolCallId: 'edit_1',
+      status: ToolCallStatus.completed,
+      content: [
+        DiffToolCallContent(
+          path: path,
+          oldText: originalContent,
+          newText: newContent,
+        ),
+      ],
+    ),
+  ),
+);
+```
+
+</Steps>
+
+## Client Side
+
+Clients implement file operations to provide file system access to agents.
+
+### Implementing Read Operation
+
+```dart
+import 'dart:io';
+import 'package:acp_dart/acp_dart.dart';
+
+class MyClient implements Client {
+  @override
+  Future<ReadTextFileResponse> readTextFile(
+    ReadTextFileRequest params,
+  ) async {
+    try {
+      final file = File(params.path);
+      
+      // Check if file exists
+      if (!await file.exists()) {
+        throw RequestError.resourceNotFound(params.path);
+      }
+      
+      // Read content
+      String content;
+      if (params.line != null || params.limit != null) {
+        // Read specific lines
+        content = await _readFileLines(
+          file,
+          startLine: params.line ?? 0,
+          lineCount: params.limit,
+        );
+      } else {
+        // Read entire file
+        content = await file.readAsString();
+      }
+      
+      return ReadTextFileResponse(content: content);
+      
+    } on FileSystemException catch (e) {
+      throw RequestError.internalError({
+        'message': 'Failed to read file',
+        'path': params.path,
+        'error': e.message,
+      });
+    }
+  }
+  
+  Future<String> _readFileLines(
+    File file,
+    int startLine,
+    int? lineCount,
+  ) async {
+    final lines = await file.readAsLines();
+    
+    if (startLine >= lines.length) {
+      return '';
+    }
+    
+    final endLine = lineCount != null
+        ? (startLine + lineCount).clamp(0, lines.length)
+        : lines.length;
+    
+    return lines.sublist(startLine, endLine).join('\n');
+  }
+}
+```
+
+### Implementing Write Operation
+
+```dart
+@override
+Future<WriteTextFileResponse> writeTextFile(
+  WriteTextFileRequest params,
+) async {
+  try {
+    final file = File(params.path);
+    
+    // Create parent directories if needed
+    await file.parent.create(recursive: true);
+    
+    // Write content
+    await file.writeAsString(params.content);
+    
+    return WriteTextFileResponse();
+    
+  } on FileSystemException catch (e) {
+    throw RequestError.internalError({
+      'message': 'Failed to write file',
+      'path': params.path,
+      'error': e.message,
+    });
+  }
+}
+```
+
+### Adding Permission Checks
+
+Implement security checks before file operations:
+
+```dart
+import 'package:path/path.dart' as path;
+
+class MyClient implements Client {
+  final String _workspaceRoot;
+  final Set<String> _allowedPaths;
+  
+  MyClient(this._workspaceRoot)
+      : _allowedPaths = {_workspaceRoot};
+  
+  bool _isPathAllowed(String filePath) {
+    final absolutePath = path.absolute(filePath);
+    final workspacePath = path.absolute(_workspaceRoot);
+    
+    // Check if path is within workspace
+    return path.isWithin(workspacePath, absolutePath);
+  }
+  
+  @override
+  Future<ReadTextFileResponse> readTextFile(
+    ReadTextFileRequest params,
+  ) async {
+    // Security check
+    if (!_isPathAllowed(params.path)) {
+      throw RequestError.invalidParams({
+        'reason': 'Path is outside allowed workspace',
+        'path': params.path,
+      });
+    }
+    
+    // Proceed with read
+    // ...
+  }
+  
+  @override
+  Future<WriteTextFileResponse> writeTextFile(
+    WriteTextFileRequest params,
+  ) async {
+    // Security check
+    if (!_isPathAllowed(params.path)) {
+      throw RequestError.invalidParams({
+        'reason': 'Path is outside allowed workspace',
+        'path': params.path,
+      });
+    }
+    
+    // Check for dangerous operations
+    if (_isDangerousPath(params.path)) {
+      throw RequestError.invalidParams({
+        'reason': 'Cannot write to system files',
+        'path': params.path,
+      });
+    }
+    
+    // Proceed with write
+    // ...
+  }
+  
+  bool _isDangerousPath(String filePath) {
+    final dangerous = [
+      '.env',
+      '.git/config',
+      'id_rsa',
+      'authorized_keys',
+    ];
+    
+    return dangerous.any(
+      (pattern) => filePath.contains(pattern),
+    );
+  }
+}
+```
+
+## Best Practices
+
+<Note>
+Always validate file paths and check permissions before executing file operations.
+</Note>
+
+### Do:
+
+✅ Validate paths are within allowed directories:
+
+```dart
+if (!path.isWithin(workspace, requestedPath)) {
+  throw RequestError.invalidParams('Path outside workspace');
+}
+```
+
+✅ Handle file encoding properly:
+
+```dart
+final content = await file.readAsString(encoding: utf8);
+```
+
+✅ Create parent directories when writing:
+
+```dart
+await file.parent.create(recursive: true);
+await file.writeAsString(content);
+```
+
+✅ Request permission for sensitive files:
+
+```dart
+if (_isSensitiveFile(path)) {
+  await requestPermission(...);
+}
+```
+
+### Don't:
+
+❌ Allow access to system files or credentials:
+
+```dart
+// Bad: no path validation
+await File(params.path).readAsString();
+```
+
+❌ Write files without creating parent directories:
+
+```dart
+// Bad: may fail if directory doesn't exist
+await file.writeAsString(content);
+```
+
+❌ Ignore file operation errors:
+
+```dart
+// Bad: silent failure
+try {
+  await readFile(...);
+} catch (e) {
+  // Error ignored
+}
+```
+
+## Complete Example
+
+See the complete implementations:
+
+```bash
+# Client example
+dart run example/client.dart
+
+# Agent example
+dart run example/agent.dart
+```
+
+## Next Steps
+
+<CardGroup cols={2}>
+  <Card title="Terminal Operations" icon="terminal" href="/guides/terminal-operations">
+    Execute commands in terminals
+  </Card>
+  <Card title="Error Handling" icon="triangle-exclamation" href="/guides/error-handling">
+    Handle file system errors
+  </Card>
+</CardGroup>

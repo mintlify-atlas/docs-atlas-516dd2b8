@@ -1,0 +1,286 @@
+---
+title: Protocol Overview
+description: Understanding the Agent Client Protocol and how it enables communication between code editors and AI agents
+---
+
+## What is ACP?
+
+The **Agent Client Protocol (ACP)** is a standardized communication protocol that enables code editors and AI-powered coding agents to work together seamlessly. It defines how these two participants exchange messages, manage sessions, execute tool calls, and handle real-time updates.
+
+<Info>
+ACP is designed to be editor-agnostic and agent-agnostic, allowing any compliant client to work with any compliant agent.
+</Info>
+
+## Protocol Architecture
+
+ACP follows a client-server architecture where:
+
+```
+┌─────────────────┐         JSON-RPC 2.0         ┌─────────────────┐
+│                 │    over NDJSON (stdio)       │                 │
+│   ACP Client    │◄────────────────────────────►│   ACP Agent     │
+│  (Code Editor)  │                               │  (AI Assistant) │
+│                 │                               │                 │
+└─────────────────┘                               └─────────────────┘
+        │                                                 │
+        │                                                 │
+    Requests:                                       Requests:
+    - Initialize                                    - File operations
+    - Create sessions                               - Permission requests
+    - Send prompts                                  - Terminal commands
+    - Cancel operations                             - Session updates
+```
+
+### Communication Layer
+
+ACP uses **JSON-RPC 2.0** over **NDJSON** (newline-delimited JSON) for bidirectional communication. This design enables:
+
+- **Request/Response**: Synchronous operations with expected replies
+- **Notifications**: Fire-and-forget messages for streaming updates
+- **Stream-based**: Efficient communication over stdin/stdout
+
+<Tip>
+The library provides the `ndJsonStream()` helper function to create ACP-compliant streams from standard IO channels.
+</Tip>
+
+## Protocol Flow
+
+A typical ACP interaction follows this sequence:
+
+### 1. Initialization
+
+The client and agent negotiate capabilities and protocol version:
+
+```dart
+final initResponse = await connection.initialize(
+  InitializeRequest(
+    protocolVersion: 1,
+    clientCapabilities: ClientCapabilities(
+      fs: FileSystemCapability(
+        readTextFile: true,
+        writeTextFile: true,
+      ),
+      terminal: true,
+    ),
+  ),
+);
+```
+
+### 2. Session Creation
+
+The client creates a new conversation session:
+
+```dart
+final session = await connection.newSession(
+  NewSessionRequest(
+    cwd: '/path/to/workspace',
+    mcpServers: [
+      StdioMcpServer(
+        name: 'filesystem',
+        command: 'mcp-server-fs',
+        args: [],
+        env: [],
+      ),
+    ],
+  ),
+);
+```
+
+### 3. Prompt Processing
+
+The client sends user prompts and receives streaming updates:
+
+```dart
+final result = await connection.prompt(
+  PromptRequest(
+    sessionId: session.sessionId,
+    prompt: [TextContentBlock(text: 'Refactor this function')],
+  ),
+);
+```
+
+During processing, the agent streams real-time updates via `session/update` notifications:
+
+- Message chunks (text, thoughts)
+- Tool calls and their execution status
+- Execution plans
+- Mode changes
+
+### 4. Tool Execution & Permissions
+
+When the agent needs to perform sensitive operations, it requests permission:
+
+```dart
+final permission = await connection.requestPermission(
+  RequestPermissionRequest(
+    sessionId: sessionId,
+    options: [
+      PermissionOption(
+        optionId: 'allow',
+        name: 'Allow this change',
+        kind: PermissionOptionKind.allowOnce,
+      ),
+      PermissionOption(
+        optionId: 'reject',
+        name: 'Reject',
+        kind: PermissionOptionKind.rejectOnce,
+      ),
+    ],
+    toolCall: toolCallUpdate,
+  ),
+);
+```
+
+## Key Protocol Features
+
+### Type Safety
+
+The Dart SDK provides full type safety with:
+
+- Sealed union types for exhaustive pattern matching
+- JSON serialization via `json_serializable`
+- Null safety throughout
+- Comprehensive error types
+
+```dart
+// Pattern match on session updates
+final update = notification.update;
+switch (update) {
+  case AgentMessageChunkSessionUpdate():
+    print(update.content);
+  case ToolCallSessionUpdate():
+    print('Tool: ${update.title}');
+  case ToolCallUpdateSessionUpdate():
+    print('Status: ${update.status}');
+}
+```
+
+### Error Handling
+
+ACP uses standard JSON-RPC error codes with additional domain-specific codes:
+
+| Code | Error | Description |
+|------|-------|-------------|
+| -32700 | Parse error | Invalid JSON |
+| -32600 | Invalid request | Malformed request |
+| -32601 | Method not found | Unknown method |
+| -32602 | Invalid params | Parameter validation failed |
+| -32603 | Internal error | Unexpected runtime error |
+| -32000 | Auth required | Authentication needed |
+| -32002 | Resource not found | File/resource missing |
+| -32800 | Cancelled | Request was cancelled |
+
+```dart
+try {
+  await connection.prompt(request);
+} catch (error) {
+  // Handle JSON-RPC errors
+  if (error is Map && error['code'] == -32800) {
+    print('Request was cancelled');
+  }
+}
+```
+
+### Request Cancellation
+
+ACP supports protocol-level cancellation via the `$/cancel_request` notification:
+
+```dart
+// Cancel a pending request
+await connection.cancelPendingRequest(
+  requestId,
+  meta: {'reason': 'User cancelled'},
+);
+```
+
+<Note>
+Cancellation is best-effort. The peer may still complete the request if it's already in progress.
+</Note>
+
+### Extension Methods
+
+Both clients and agents can implement custom extension methods prefixed with `_`:
+
+```dart
+// Agent extends protocol
+class MyAgent implements Agent {
+  @override
+  Future<Map<String, dynamic>>? extMethod(
+    String method,
+    Map<String, dynamic> params,
+  ) async {
+    if (method == '_custom/analyze') {
+      return {'analysis': 'results'};
+    }
+    return null;
+  }
+}
+```
+
+## Protocol Versions
+
+### Stable Features (v0.1.0)
+
+The current stable protocol includes:
+
+- Core lifecycle: `initialize`, `authenticate`
+- Session management: `session/new`, `session/load`, `session/prompt`
+- Session control: `session/cancel`, `session/set_mode`, `session/set_config_option`
+- File operations: `fs/read_text_file`, `fs/write_text_file`
+- Terminal operations: `terminal/create`, `terminal/output`, `terminal/wait_for_exit`, `terminal/kill`, `terminal/release`
+- Updates: All core session update types
+- Cancellation: `$/cancel_request`
+
+### Unstable Features
+
+The SDK also supports unstable features that may change:
+
+- `session/list` - List existing sessions
+- `session/fork` - Fork a session to create a branch
+- `session/resume` - Resume without replaying history
+- `session/set_model` - Change the AI model
+
+<Info>
+Unstable features are marked with the `unstable` prefix in method names and may be removed or changed in future versions.
+</Info>
+
+## Stream Behavior
+
+The `ndJsonStream()` function handles malformed messages gracefully:
+
+- Invalid JSON lines are skipped
+- Valid messages continue to be processed
+- Parse errors can be logged via the `onParseError` callback
+
+```dart
+final stream = ndJsonStream(
+  stdin,
+  stdout,
+  onParseError: (line, error) {
+    stderr.writeln('Parse error: $error in line: $line');
+  },
+);
+```
+
+## Next Steps
+
+<CardGroup cols={2}>
+  <Card title="Agents" icon="robot" href="/concepts/agents">
+    Learn how to implement an ACP agent
+  </Card>
+  <Card title="Clients" icon="desktop" href="/concepts/clients">
+    Learn how to implement an ACP client
+  </Card>
+  <Card title="Sessions" icon="layer-group" href="/concepts/sessions">
+    Understand session management
+  </Card>
+  <Card title="Connections" icon="plug" href="/concepts/connections">
+    Deep dive into connection handling
+  </Card>
+</CardGroup>
+
+## Resources
+
+- [Official ACP Documentation](https://agentclientprotocol.com)
+- [ACP Specification Repository](https://github.com/zed-industries/agent-client-protocol)
+- [Example Implementations](/examples/basic-agent)

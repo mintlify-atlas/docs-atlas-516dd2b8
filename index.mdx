@@ -1,97 +1,125 @@
 ---
-title: "Introduction"
-description: "Welcome to the new home for your documentation"
+title: "ACP Dart SDK"
+description: "Official Dart SDK for the Agent Client Protocol - Build AI-powered applications with standardized communication between code editors and coding agents"
 ---
 
-## Setting up
+<div className="bg-[#F9FAFB] rounded-lg p-8 mb-8">
+  <h1 className="text-[#1F2937] font-bold text-4xl mb-4">Build AI-Powered Applications with ACP</h1>
+  <p className="text-[#1F2937] text-lg mb-6">
+    The official Dart implementation of the Agent Client Protocol (ACP) — a standardized communication protocol 
+    between code editors and AI-powered coding agents. Build robust agents and clients with full type safety.
+  </p>
+  <div className="flex gap-4">
+    <a href="/quickstart" className="inline-flex items-center px-6 py-3 bg-transparent text-[#2563eb] border border-[#2563eb] rounded-none font-semibold hover:bg-[#2563eb] hover:text-white transition-colors">
+      Get Started
+    </a>
+    <a href="https://github.com/SkrOYC/acp-dart" className="inline-flex items-center px-6 py-3 bg-[#f9fafb] text-[#374151] rounded-md font-semibold hover:bg-[#e5e7eb] transition-colors">
+      View on GitHub
+    </a>
+  </div>
+</div>
 
-Get your documentation site up and running in minutes.
+## Key Features
 
-<Card
-  title="Start here"
-  icon="rocket"
-  href="/quickstart"
-  horizontal
->
-  Follow our three step quickstart guide.
-</Card>
-
-## Make it yours
-
-Design a docs site that looks great and empowers your users.
-
-<Columns cols={2}>
-  <Card
-    title="Edit locally"
-    icon="pen-to-square"
-    href="/development"
-  >
-    Edit your docs locally and preview them in real time.
+<CardGroup cols={2}>
+  <Card title="Type-Safe Communication" icon="shield-check">
+    Full Dart type annotations with null safety and sealed union types for exhaustive message handling
   </Card>
-  <Card
-    title="Customize your site"
-    icon="palette"
-    href="/essentials/settings"
-  >
-    Customize the design and colors of your site to match your brand.
+  <Card title="Complete Protocol Support" icon="network-wired">
+    Comprehensive implementation of ACP stable features with support for unstable and extension methods
   </Card>
-    <Card
-    title="Set up navigation"
-    icon="map"
-    href="/essentials/navigation"
-  >
-    Organize your docs to help users find what they need and succeed with your product.
+  <Card title="Stream-Based Architecture" icon="stream">
+    NDJSON-based communication over stdio with built-in error handling and automatic JSON-RPC error mapping
   </Card>
-  <Card
-    title="API documentation"
-    icon="terminal"
-    href="/api-reference/introduction"
-  >
-    Auto-generate API documentation from OpenAPI specifications.
+  <Card title="Terminal & File Operations" icon="terminal">
+    Built-in support for terminal management, file system operations, and session lifecycle control
   </Card>
-</Columns>
+</CardGroup>
 
-## Create beautiful pages
+## Quick Example
 
-Everything you need to create world-class documentation.
+Build an agent in minutes with the ACP Dart SDK:
 
-<Columns cols={2}>
-  <Card
-    title="Write with MDX"
-    icon="pen-fancy"
-    href="/essentials/markdown"
-  >
-    Use MDX to style your docs pages.
-  </Card>
-  <Card
-    title="Code samples"
-    icon="code"
-    href="/essentials/code"
-  >
-    Add sample code to demonstrate how to use your product.
-  </Card>
-  <Card
-    title="Images"
-    icon="image"
-    href="/essentials/images"
-  >
-    Display images and other media.
-  </Card>
-  <Card
-    title="Reusable snippets"
-    icon="recycle"
-    href="/essentials/reusable-snippets"
-  >
-    Write once and reuse across your docs.
-  </Card>
-</Columns>
+```dart agent.dart
+import 'dart:io';
+import 'package:acp_dart/acp_dart.dart';
 
-## Need inspiration?
+class MyAgent implements Agent {
+  final AgentSideConnection _connection;
 
-<Card
-  title="See complete examples"
-  icon="stars"
-  href="https://mintlify.com/customers"
->
-  Browse our showcase of exceptional documentation sites.
-</Card>
+  MyAgent(this._connection);
+
+  @override
+  Future<InitializeResponse> initialize(InitializeRequest params) async {
+    return InitializeResponse(
+      protocolVersion: '0.1.0',
+      capabilities: AgentCapabilities(
+        loadSession: false,
+        auth: [],
+      ),
+    );
+  }
+
+  @override
+  Future<NewSessionResponse> newSession(NewSessionRequest params) async {
+    return NewSessionResponse(
+      sessionId: 'session-123',
+      availableModes: [],
+    );
+  }
+
+  // Implement other required methods...
+}
+
+void main() {
+  final stream = ndJsonStream(stdin, stdout);
+  final connection = AgentSideConnection((conn) => MyAgent(conn), stream);
+}
+```
+
+## Getting Started
+
+<CardGroup cols={3}>
+  <Card title="Installation" icon="download" href="/installation">
+    Add the SDK to your Dart project with pub
+  </Card>
+  <Card title="Quickstart" icon="rocket" href="/quickstart">
+    Build your first agent or client in 5 minutes
+  </Card>
+  <Card title="Core Concepts" icon="book" href="/concepts/protocol-overview">
+    Learn about agents, clients, and the ACP protocol
+  </Card>
+</CardGroup>
+
+## Protocol Support
+
+The SDK provides comprehensive support for the Agent Client Protocol:
+
+<CardGroup cols={2}>
+  <Card title="Agent Methods" icon="robot">
+    `initialize`, `session/new`, `session/load`, `session/prompt`, `session/cancel`, and more
+  </Card>
+  <Card title="Client Methods" icon="desktop">
+    `fs/read_text_file`, `fs/write_text_file`, `terminal/create`, `session/request_permission`
+  </Card>
+  <Card title="Session Updates" icon="arrows-rotate">
+    Real-time streaming of message chunks, tool calls, plans, and execution updates
+  </Card>
+  <Card title="Error Handling" icon="circle-exclamation">
+    JSON-RPC error mapping with typed error responses and cancellation support
+  </Card>
+</CardGroup>
+
+## Resources
+
+<CardGroup cols={3}>
+  <Card title="API Reference" icon="code" href="/api/agent">
+    Complete API documentation for all types and methods
+  </Card>
+  <Card title="Examples" icon="lightbulb" href="/examples/basic-agent">
+    Working examples of agents and clients
+  </Card>
+  <Card title="Protocol Spec" icon="file-lines" href="https://agentclientprotocol.com">
+    Official ACP protocol documentation
+  </Card>
+</CardGroup>

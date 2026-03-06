@@ -1,0 +1,347 @@
+---
+title: "Error Handling"
+description: "Error types and error handling in ACP communication"
+---
+
+## Overview
+
+The ACP Dart SDK provides comprehensive error handling through the `RequestError` class and automatic error mapping between Dart exceptions and JSON-RPC error codes.
+
+## RequestError
+
+The `RequestError` class represents errors that occur during ACP communication. It implements the `Exception` interface and maps to JSON-RPC 2.0 error codes.
+
+```dart
+class RequestError implements Exception {
+  final int code;
+  final String message;
+  final dynamic data;
+
+  RequestError(this.code, this.message, [this.data]);
+}
+```
+
+<ParamField path="code" type="int" required>
+  The JSON-RPC 2.0 error code
+</ParamField>
+
+<ParamField path="message" type="String" required>
+  A human-readable error message
+</ParamField>
+
+<ParamField path="data" type="dynamic">
+  Optional additional error data providing context
+</ParamField>
+
+## Standard Error Factories
+
+The SDK provides factory methods for all standard JSON-RPC errors:
+
+### Protocol Errors
+
+<ResponseField name="RequestError.parseError([data])" type="RequestError">
+  **Code**: `-32700`  
+  Invalid JSON was received. An error occurred while parsing the JSON text.
+</ResponseField>
+
+<ResponseField name="RequestError.invalidRequest([data])" type="RequestError">
+  **Code**: `-32600`  
+  The JSON sent is not a valid request object.
+</ResponseField>
+
+<ResponseField name="RequestError.methodNotFound(String method)" type="RequestError">
+  **Code**: `-32601`  
+  The method does not exist or is not available.
+</ResponseField>
+
+<ResponseField name="RequestError.invalidParams([data])" type="RequestError">
+  **Code**: `-32602`  
+  Invalid method parameters. Used for validation failures.
+</ResponseField>
+
+<ResponseField name="RequestError.internalError([data])" type="RequestError">
+  **Code**: `-32603`  
+  Internal JSON-RPC error. Used for unexpected runtime failures.
+</ResponseField>
+
+### Application Errors
+
+<ResponseField name="RequestError.authRequired([data])" type="RequestError">
+  **Code**: `-32000`  
+  Authentication is required before this operation can be performed.
+</ResponseField>
+
+<ResponseField name="RequestError.resourceNotFound([String? uri])" type="RequestError">
+  **Code**: `-32002`  
+  The requested resource (such as a file) was not found.
+</ResponseField>
+
+<ResponseField name="RequestError.requestCancelled([data])" type="RequestError">
+  **Code**: `-32800`  
+  The request was cancelled by the client or due to `$/cancel_request`.
+</ResponseField>
+
+## Error Code Reference
+
+| Code | Name | Description | When to Use |
+|------|------|-------------|-------------|
+| `-32700` | Parse error | Invalid JSON | Malformed JSON in message |
+| `-32600` | Invalid Request | Invalid request object | Missing required fields |
+| `-32601` | Method not found | Unknown method | Unsupported method name |
+| `-32602` | Invalid params | Invalid parameters | Type/validation errors |
+| `-32603` | Internal error | Internal error | Unexpected exceptions |
+| `-32000` | Auth required | Authentication needed | User must authenticate |
+| `-32002` | Resource not found | Resource missing | File/session not found |
+| `-32800` | Cancelled | Request cancelled | Client cancellation |
+
+## Automatic Error Mapping
+
+The SDK automatically maps Dart exceptions to appropriate JSON-RPC errors:
+
+```dart
+// In Connection._mapRequestError()
+if (error is RequestError) {
+  return error; // Already a RequestError
+}
+
+if (error is TypeError || 
+    error is FormatException || 
+    error is ArgumentError) {
+  return RequestError.invalidParams(errorData);
+}
+
+return RequestError.internalError();
+```
+
+<Info>
+**Parameter validation failures** (TypeError, FormatException, ArgumentError) automatically become `-32602 Invalid params` errors.
+
+**Unexpected runtime failures** automatically become `-32603 Internal error` errors without exposing internal details.
+</Info>
+
+## Usage Examples
+
+### Throwing Errors in Handlers
+
+```dart
+import 'package:acp_dart/acp_dart.dart';
+
+class MyAgent implements Agent {
+  @override
+  Future<PromptResponse> prompt(PromptRequest params) async {
+    // Validate session exists
+    if (!sessions.containsKey(params.sessionId)) {
+      throw RequestError.resourceNotFound(params.sessionId);
+    }
+    
+    // Check authentication
+    if (!isAuthenticated) {
+      throw RequestError.authRequired({'sessionId': params.sessionId});
+    }
+    
+    // Validate prompt
+    if (params.message.isEmpty) {
+      throw RequestError.invalidParams({
+        'field': 'message',
+        'error': 'Message cannot be empty',
+      });
+    }
+    
+    // Process prompt
+    return await processPrompt(params);
+  }
+}
+```
+
+### Catching Errors
+
+```dart
+import 'package:acp_dart/acp_dart.dart';
+
+try {
+  final response = await connection.sendRequest(
+    'session/prompt',
+    promptRequest.toJson(),
+  );
+} on RequestError catch (e) {
+  if (e.code == RequestError.requestCancelledCode) {
+    print('Request was cancelled');
+  } else if (e.code == -32000) {
+    print('Authentication required');
+  } else {
+    print('Error ${e.code}: ${e.message}');
+  }
+} catch (e) {
+  print('Unexpected error: $e');
+}
+```
+
+### Custom Error Data
+
+```dart
+import 'package:acp_dart/acp_dart.dart';
+
+class MyClient implements Client {
+  @override
+  Future<ReadTextFileResponse> readTextFile(ReadTextFileRequest params) async {
+    final file = File(params.path);
+    
+    if (!file.existsSync()) {
+      throw RequestError.resourceNotFound(params.path);
+    }
+    
+    if (!await hasPermission(params.path)) {
+      throw RequestError(-32003, 'Permission denied', {
+        'path': params.path,
+        'reason': 'File is outside allowed directory',
+      });
+    }
+    
+    final content = await file.readAsString();
+    return ReadTextFileResponse(content: content);
+  }
+}
+```
+
+### Validation Errors
+
+```dart
+import 'package:acp_dart/acp_dart.dart';
+
+Future<NewSessionResponse> newSession(NewSessionRequest params) async {
+  // Dart will throw TypeError/ArgumentError for invalid types
+  // These automatically become -32602 Invalid params
+  
+  // Manual validation
+  if (params.mcpServers.length > 10) {
+    throw RequestError.invalidParams({
+      'field': 'mcpServers',
+      'error': 'Too many MCP servers (max 10)',
+      'value': params.mcpServers.length,
+    });
+  }
+  
+  return NewSessionResponse(
+    sessionId: createSession(params),
+    availableModes: [],
+  );
+}
+```
+
+## Error Response Structure
+
+Errors are serialized to JSON-RPC error responses:
+
+```json
+{
+  "jsonrpc": "2.0",
+  "id": 1,
+  "error": {
+    "code": -32602,
+    "message": "Invalid params",
+    "data": {
+      "field": "message",
+      "error": "Message cannot be empty"
+    }
+  }
+}
+```
+
+### ErrorResponse Class
+
+```dart
+class ErrorResponse {
+  final int code;
+  final String message;
+  final dynamic data;
+
+  Map<String, dynamic> toJson() => {
+    'code': code,
+    'message': message,
+    if (data != null) 'data': data,
+  };
+}
+```
+
+## Converting Errors
+
+```dart
+import 'package:acp_dart/acp_dart.dart';
+
+final error = RequestError.invalidParams({'field': 'path'});
+
+// Convert to error response
+final errorResponse = error.toErrorResponse();
+
+// Convert to JSON-RPC result (error variant)
+final result = error.toResult();
+// {'error': {'code': -32602, 'message': 'Invalid params', 'data': {...}}}
+```
+
+## Best Practices
+
+<CardGroup cols={2}>
+  <Card title="Use Specific Errors" icon="bullseye">
+    Use the appropriate factory method for each error type rather than creating generic errors
+  </Card>
+  <Card title="Include Context" icon="circle-info">
+    Provide helpful error data to aid debugging (field names, invalid values, etc.)
+  </Card>
+  <Card title="Never Expose Internals" icon="shield">
+    Use `internalError()` for unexpected exceptions to avoid exposing implementation details
+  </Card>
+  <Card title="Validate Early" icon="check-double">
+    Validate parameters early and throw `invalidParams` before processing begins
+  </Card>
+</CardGroup>
+
+## Error Handling Patterns
+
+### Retry Logic
+
+```dart
+import 'package:acp_dart/acp_dart.dart';
+
+Future<T> withRetry<T>(Future<T> Function() fn) async {
+  for (var attempt = 0; attempt < 3; attempt++) {
+    try {
+      return await fn();
+    } on RequestError catch (e) {
+      if (e.code == -32603 && attempt < 2) {
+        await Future.delayed(Duration(seconds: 1 << attempt));
+        continue;
+      }
+      rethrow;
+    }
+  }
+  throw RequestError.internalError('All retry attempts failed');
+}
+```
+
+### Error Logging
+
+```dart
+import 'dart:io';
+import 'package:acp_dart/acp_dart.dart';
+
+void logError(RequestError error, String context) {
+  stderr.writeln('[$context] Error ${error.code}: ${error.message}');
+  if (error.data != null) {
+    stderr.writeln('  Data: ${error.data}');
+  }
+}
+```
+
+## Related Documentation
+
+<CardGroup cols={3}>
+  <Card title="Connection" icon="network-wired" href="/api/connection">
+    Error handling in connections
+  </Card>
+  <Card title="Error Handling Guide" icon="book" href="/guides/error-handling">
+    Comprehensive error handling patterns
+  </Card>
+  <Card title="Protocol Spec" icon="file-lines" href="https://www.jsonrpc.org/specification">
+    JSON-RPC 2.0 specification
+  </Card>
+</CardGroup>

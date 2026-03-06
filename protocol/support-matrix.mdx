@@ -1,0 +1,171 @@
+---
+title: Protocol Support Matrix
+description: Complete overview of ACP protocol support in the Dart SDK
+icon: table
+---
+
+The ACP Dart SDK provides comprehensive support for the Agent Client Protocol, tracking both stable and unstable protocol surfaces explicitly.
+
+## Stable Features
+
+All ACP stable protocol features are fully supported and production-ready.
+
+### Agent Methods
+
+Methods that clients can call on agents:
+
+| Method | Status | Description |
+|--------|--------|-------------|
+| `initialize` | ✅ Supported | Establishes connection and negotiates protocol capabilities |
+| `authenticate` | ✅ Supported | Authenticates the client using specified authentication method |
+| `session/new` | ✅ Supported | Creates a new conversation session |
+| `session/load` | ✅ Supported | Loads an existing session to resume conversation |
+| `session/prompt` | ✅ Supported | Processes a user prompt within a session |
+| `session/cancel` | ✅ Supported | Cancels ongoing operations for a session |
+| `session/set_mode` | ✅ Supported | Sets the operational mode for a session |
+| `session/set_config_option` | ✅ Supported | Sets the current value for a session configuration option |
+
+### Client Methods
+
+Methods that agents can call on clients:
+
+| Method | Status | Description |
+|--------|--------|-------------|
+| `fs/read_text_file` | ✅ Supported | Reads content from a text file |
+| `fs/write_text_file` | ✅ Supported | Writes content to a text file |
+| `session/request_permission` | ✅ Supported | Requests user permission for tool call operations |
+| `session/update` | ✅ Supported | Sends session update notifications to the client |
+
+### Terminal Methods
+
+Methods for terminal management:
+
+| Method | Status | Description |
+|--------|--------|-------------|
+| `terminal/create` | ✅ Supported | Creates a new terminal and executes a command |
+| `terminal/output` | ✅ Supported | Gets the current output and exit status |
+| `terminal/wait_for_exit` | ✅ Supported | Waits for terminal command to exit |
+| `terminal/kill` | ✅ Supported | Kills a terminal command |
+| `terminal/release` | ✅ Supported | Releases terminal and frees resources |
+
+### Protocol Notifications
+
+| Notification | Status | Description |
+|--------------|--------|-------------|
+| `$/cancel_request` | ✅ Supported | Protocol-level cancellation of specific JSON-RPC requests |
+
+### Session Updates
+
+All stable session update variants are supported:
+
+<CardGroup cols={2}>
+  <Card title="Content Updates" icon="message">
+    - `user_message_chunk`
+    - `agent_message_chunk`
+    - `agent_thought_chunk`
+  </Card>
+  <Card title="Tool Updates" icon="wrench">
+    - `tool_call`
+    - `tool_call_update`
+  </Card>
+  <Card title="Planning Updates" icon="list-check">
+    - `plan`
+    - `available_commands_update`
+  </Card>
+  <Card title="State Updates" icon="gear">
+    - `current_mode_update`
+    - `config_option_update`
+  </Card>
+</CardGroup>
+
+## Unstable Features
+
+<Warning>
+Unstable features are not part of the official ACP specification yet and may be removed or changed at any point.
+</Warning>
+
+### Unstable Agent Methods
+
+| Method | Status | Description |
+|--------|--------|-------------|
+| `session/list` | ✅ Supported | Lists existing sessions from the agent |
+| `session/fork` | ✅ Supported | Forks an existing session to create a new independent session |
+| `session/resume` | ✅ Supported | Resumes an existing session without replaying messages |
+| `session/set_model` | ✅ Supported | Selects the model for a given session |
+
+### Unstable Session Updates
+
+Additional update variants implemented for parity tracking:
+
+- `session_info_update` - Updates to session metadata (title, timestamp)
+- `usage_update` - Token usage and cost information
+
+## Known Limitations
+
+<AccordionGroup>
+  <Accordion title="Unsupported Filesystem Operations">
+    The following filesystem operations are not currently supported:
+    - File deletion operations
+    - File move/rename operations  
+    - Directory creation (`mkdir`)
+    - Directory listing operations
+    
+    Only `fs/read_text_file` and `fs/write_text_file` from the ACP stable surface are implemented.
+  </Accordion>
+  
+  <Accordion title="Extension Methods">
+    The SDK supports extension methods and notifications (method names prefixed with `_`). 
+    
+    Method names are passed through exactly as provided without rewriting.
+    
+    See the [Extensions](/protocol/extensions) page for implementation details.
+  </Accordion>
+</AccordionGroup>
+
+## Protocol Version
+
+The SDK implements **ACP Protocol Version 0.1.0**.
+
+## Method Coverage Summary
+
+```dart
+// From lib/src/schema.dart:
+const agentMethods = {
+  'authenticate': 'authenticate',
+  'initialize': 'initialize',
+  'modelSelect': 'session/set_model',
+  'sessionFork': 'session/fork',
+  'sessionList': 'session/list',
+  'sessionSetConfigOption': 'session/set_config_option',
+  'sessionCancel': 'session/cancel',
+  'sessionLoad': 'session/load',
+  'sessionNew': 'session/new',
+  'sessionPrompt': 'session/prompt',
+  'sessionResume': 'session/resume',
+  'sessionSetMode': 'session/set_mode',
+};
+
+const clientMethods = {
+  'fsReadTextFile': 'fs/read_text_file',
+  'fsWriteTextFile': 'fs/write_text_file',
+  'sessionRequestPermission': 'session/request_permission',
+  'sessionUpdate': 'session/update',
+  'terminalCreate': 'terminal/create',
+  'terminalKill': 'terminal/kill',
+  'terminalOutput': 'terminal/output',
+  'terminalRelease': 'terminal/release',
+  'terminalWaitForExit': 'terminal/wait_for_exit',
+};
+
+const protocolMethods = {
+  'cancelRequest': r'$/cancel_request'
+};
+```
+
+## Verification Process
+
+Before each release, the SDK undergoes a comprehensive parity verification process documented in [`parity_verification_checklist.md`](https://github.com/SkrOYC/acp-dart/blob/master/parity_verification_checklist.md).
+
+<Card title="Next: Explore Stable Features" icon="arrow-right" href="/protocol/stable-features">
+  Learn how to use stable protocol features in your implementation
+</Card>

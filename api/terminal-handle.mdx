@@ -1,0 +1,262 @@
+---
+title: "TerminalHandle"
+description: "Class for managing terminal operations within a session"
+---
+
+## Overview
+
+The `TerminalHandle` class provides methods to interact with a terminal created by an agent. It allows you to get output, wait for completion, kill processes, and release resources.
+
+Terminal handles are typically created by agents and provided to clients for terminal management operations.
+
+See the source at `lib/src/acp.dart:1126-1213`.
+
+## Constructor
+
+```dart
+TerminalHandle(String id, String sessionId, Connection connection)
+```
+
+<ParamField path="id" type="String" required>
+  The unique identifier for this terminal instance
+</ParamField>
+
+<ParamField path="sessionId" type="String" required>
+  The session this terminal belongs to
+</ParamField>
+
+<ParamField path="connection" type="Connection" required>
+  The connection for sending requests
+</ParamField>
+
+## Properties
+
+### id
+
+```dart
+final String id
+```
+
+The unique identifier for this terminal instance.
+
+## Methods
+
+### currentOutput
+
+```dart
+Future<TerminalOutputResponse> currentOutput()
+```
+
+Gets the current terminal output without waiting for the command to exit.
+
+Returns the current stdout, stderr, and exit status if the command has already completed.
+
+<ResponseField name="return" type="Future<TerminalOutputResponse>">
+  A future that resolves with the terminal output response
+  
+  <Expandable title="TerminalOutputResponse fields">
+    <ResponseField name="output" type="String" required>
+      The terminal output (stdout and stderr combined)
+    </ResponseField>
+    
+    <ResponseField name="truncated" type="bool" required>
+      Whether the output was truncated due to size limits
+    </ResponseField>
+    
+    <ResponseField name="exitStatus" type="TerminalExitStatus">
+      The exit status if the command has completed
+    </ResponseField>
+  </Expandable>
+</ResponseField>
+
+#### Example
+
+```dart
+final output = await terminalHandle.currentOutput();
+print('Terminal output: ${output.output}');
+if (output.exitStatus != null) {
+  print('Command exited with code: ${output.exitStatus!.exitCode}');
+}
+```
+
+### waitForExit
+
+```dart
+Future<WaitForTerminalExitResponse> waitForExit()
+```
+
+Waits for the terminal command to complete and returns its exit status.
+
+This method blocks until the command finishes execution, then returns the exit code that indicates the command's success or failure.
+
+<ResponseField name="return" type="Future<WaitForTerminalExitResponse>">
+  A future that resolves when the command exits
+  
+  <Expandable title="WaitForTerminalExitResponse fields">
+    <ResponseField name="exitCode" type="int">
+      The exit code of the command
+    </ResponseField>
+    
+    <ResponseField name="signal" type="String">
+      The signal that terminated the command (if applicable)
+    </ResponseField>
+  </Expandable>
+</ResponseField>
+
+#### Example
+
+```dart
+final exitStatus = await terminalHandle.waitForExit();
+if (exitStatus.exitCode == 0) {
+  print('Command succeeded');
+} else {
+  print('Command failed with exit code: ${exitStatus.exitCode}');
+}
+```
+
+### kill
+
+```dart
+Future<KillTerminalCommandResponse> kill()
+```
+
+Kills the terminal command without releasing the terminal.
+
+The terminal remains valid after killing, allowing you to:
+- Get the final output with `currentOutput()`
+- Check the exit status
+- Release the terminal when done
+
+Useful for implementing timeouts or cancellation.
+
+<ResponseField name="return" type="Future<KillTerminalCommandResponse>">
+  A future that resolves when the kill request completes
+</ResponseField>
+
+#### Example
+
+```dart
+// Kill a long-running command
+await terminalHandle.kill();
+
+// Get the final output
+final output = await terminalHandle.currentOutput();
+print('Output before kill: ${output.output}');
+
+// Release when done
+await terminalHandle.release();
+```
+
+### release
+
+```dart
+Future<ReleaseTerminalResponse> release()
+```
+
+Releases the terminal and frees all associated resources.
+
+If the command is still running, it will be killed. After release, the terminal ID becomes invalid and cannot be used with other terminal methods.
+
+Tool calls that already reference this terminal will continue to display its output.
+
+<Warning>
+  **Important:** Always call this method when done with the terminal to prevent resource leaks.
+</Warning>
+
+<ResponseField name="return" type="Future<ReleaseTerminalResponse>">
+  A future that resolves when the terminal is released
+</ResponseField>
+
+#### Example
+
+```dart
+try {
+  // Use terminal
+  final output = await terminalHandle.currentOutput();
+  print(output.output);
+} finally {
+  // Always release
+  await terminalHandle.release();
+}
+```
+
+### dispose
+
+```dart
+Future<void> dispose()
+```
+
+Disposes of the terminal handle and releases resources.
+
+This is the Dart equivalent of TypeScript's `[Symbol.asyncDispose]`. It ensures proper cleanup by calling `release()`.
+
+Implements the `AsyncDisposable` interface.
+
+<ResponseField name="return" type="Future<void>">
+  A future that completes when disposal is done
+</ResponseField>
+
+#### Example
+
+```dart
+// Using with try-finally
+final terminal = await createTerminal(...);
+try {
+  await terminal.waitForExit();
+} finally {
+  await terminal.dispose();
+}
+```
+
+## Complete Usage Example
+
+```dart
+import 'package:acp_dart/acp_dart.dart';
+
+Future<void> runCommand(AgentSideConnection connection, String sessionId) async {
+  // Create terminal
+  final response = await connection.createTerminal(
+    CreateTerminalRequest(
+      sessionId: sessionId,
+      command: 'npm',
+      args: ['test'],
+      cwd: '/path/to/project',
+    ),
+  );
+  
+  // Create handle (in practice, this would be done by the SDK)
+  final terminal = TerminalHandle(
+    response!.terminalId,
+    sessionId,
+    connection._connection,
+  );
+  
+  try {
+    // Poll for output
+    var output = await terminal.currentOutput();
+    print('Initial output: ${output.output}');
+    
+    // Wait for completion
+    final exitStatus = await terminal.waitForExit();
+    
+    // Get final output
+    output = await terminal.currentOutput();
+    print('Final output: ${output.output}');
+    
+    if (exitStatus.exitCode == 0) {
+      print('Tests passed!');
+    } else {
+      print('Tests failed with code ${exitStatus.exitCode}');
+    }
+  } finally {
+    // Always clean up
+    await terminal.dispose();
+  }
+}
+```
+
+## See Also
+
+- [CreateTerminalRequest](/api/requests#createterminalrequest) - Creating terminals
+- [Terminal requests](/api/requests#terminal) - Other terminal-related requests
+- [Terminal responses](/api/responses#terminal) - Response types for terminal operations

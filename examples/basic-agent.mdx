@@ -1,0 +1,367 @@
+---
+title: 'Basic Agent Implementation'
+description: 'Learn how to create a simple ACP agent that handles sessions, processes prompts, and manages tool calls'
+icon: 'robot'
+---
+
+## Overview
+
+This guide shows you how to build a basic ACP agent from scratch. An agent implements the `Agent` interface to handle client requests, manage sessions, and process user prompts.
+
+## Complete Example
+
+Here's a fully functional agent implementation that demonstrates core ACP concepts:
+
+```dart
+import 'dart:io';
+import 'dart:async';
+import 'dart:math';
+import 'package:acp_dart/acp_dart.dart';
+
+/// Tracks the state of an agent session including any pending operations
+class AgentSession {
+  /// Controller for aborting pending operations
+  Completer<void>? pendingPrompt;
+
+  AgentSession({this.pendingPrompt});
+}
+
+/// Example agent implementation demonstrating ACP protocol usage
+class ExampleAgent implements Agent {
+  final AgentSideConnection _connection;
+  final Map<String, AgentSession> _sessions = {};
+
+  ExampleAgent(this._connection);
+
+  @override
+  Future<InitializeResponse> initialize(InitializeRequest params) async {
+    return InitializeResponse(
+      protocolVersion: 1,
+      agentCapabilities: AgentCapabilities(loadSession: false),
+      authMethods: const [],
+    );
+  }
+
+  @override
+  Future<NewSessionResponse> newSession(NewSessionRequest params) async {
+    final sessionId = _generateRandomSessionId();
+    _sessions[sessionId] = AgentSession();
+
+    return NewSessionResponse(
+      sessionId: sessionId,
+      modes: SessionModeState(
+        availableModes: [SessionMode(id: 'default', name: 'Default')],
+        currentModeId: 'default',
+      ),
+    );
+  }
+
+  String _generateRandomSessionId() {
+    const chars = 'abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789';
+    final random = Random();
+    final buffer = StringBuffer();
+
+    for (int i = 0; i < 16; i++) {
+      buffer.write(chars[random.nextInt(chars.length)]);
+    }
+
+    return buffer.toString();
+  }
+
+  @override
+  Future<PromptResponse> prompt(PromptRequest params) async {
+    final session = _sessions[params.sessionId];
+
+    if (session == null) {
+      throw RequestError.resourceNotFound(params.sessionId);
+    }
+
+    // Cancel any existing pending prompt
+    if (session.pendingPrompt != null && !session.pendingPrompt!.isCompleted) {
+      session.pendingPrompt!.complete();
+    }
+
+    // Create a new completer for this prompt
+    final completer = Completer<void>();
+    session.pendingPrompt = completer;
+
+    try {
+      await _simulateTurn(params.sessionId, completer.future.asStream());
+    } catch (err) {
+      if (session.pendingPrompt != null && session.pendingPrompt!.isCompleted) {
+        return PromptResponse(stopReason: StopReason.cancelled);
+      }
+      rethrow;
+    } finally {
+      session.pendingPrompt = null;
+    }
+
+    return PromptResponse(stopReason: StopReason.endTurn);
+  }
+
+  @override
+  Future<void> cancel(CancelNotification params) async {
+    final session = _sessions[params.sessionId];
+    if (session != null &&
+        session.pendingPrompt != null &&
+        !session.pendingPrompt!.isCompleted) {
+      session.pendingPrompt!.complete();
+    }
+  }
+
+  // Other required methods...
+  @override
+  Future<LoadSessionResponse>? loadSession(LoadSessionRequest params) async {
+    throw RequestError.methodNotFound('session/load');
+  }
+
+  @override
+  Future<SetSessionModeResponse?>? setSessionMode(
+    SetSessionModeRequest params,
+  ) async {
+    return SetSessionModeResponse();
+  }
+
+  @override
+  Future<SetSessionConfigOptionResponse>? setSessionConfigOption(
+    SetSessionConfigOptionRequest params,
+  ) {
+    return null;
+  }
+
+  @override
+  Future<AuthenticateResponse?>? authenticate(AuthenticateRequest params) async {
+    return AuthenticateResponse();
+  }
+
+  @override
+  Future<SetSessionModelResponse?>? setSessionModel(
+    SetSessionModelRequest params,
+  ) async {
+    return SetSessionModelResponse();
+  }
+
+  @override
+  Future<Map<String, dynamic>>? extMethod(
+    String method,
+    Map<String, dynamic> params,
+  ) async {
+    throw RequestError.methodNotFound(method);
+  }
+
+  @override
+  Future<void>? extNotification(
+    String method,
+    Map<String, dynamic> params,
+  ) async {}
+
+  Future<void> _simulateTurn(String sessionId, Stream<void> abortStream) async {
+    // Implementation details...
+  }
+}
+
+void main() {
+  // Create the ACP stream using stdin/stdout
+  final stream = ndJsonStream(stdin, stdout);
+
+  // Create the agent connection
+  final connection = AgentSideConnection(
+    (conn) => ExampleAgent(conn),
+    stream,
+  );
+}
+```
+
+## Key Concepts
+
+### Initialization
+
+The `initialize` method is called once at the start of the connection to negotiate protocol capabilities:
+
+```dart
+@override
+Future<InitializeResponse> initialize(InitializeRequest params) async {
+  return InitializeResponse(
+    protocolVersion: 1,
+    agentCapabilities: AgentCapabilities(
+      loadSession: false,
+      // Add other capabilities as needed
+    ),
+    authMethods: const [],
+  );
+}
+```
+
+<Note>
+  The protocol version must match between client and agent. Version 1 is the current stable version.
+</Note>
+
+### Session Management
+
+Sessions represent independent conversation contexts. Create a new session:
+
+```dart
+@override
+Future<NewSessionResponse> newSession(NewSessionRequest params) async {
+  final sessionId = _generateRandomSessionId();
+  _sessions[sessionId] = AgentSession();
+
+  return NewSessionResponse(
+    sessionId: sessionId,
+    modes: SessionModeState(
+      availableModes: [
+        SessionMode(id: 'default', name: 'Default'),
+        SessionMode(id: 'code', name: 'Code Mode'),
+      ],
+      currentModeId: 'default',
+    ),
+  );
+}
+```
+
+### Processing Prompts
+
+The `prompt` method handles user input and generates responses:
+
+```dart
+@override
+Future<PromptResponse> prompt(PromptRequest params) async {
+  final session = _sessions[params.sessionId];
+
+  if (session == null) {
+    throw RequestError.resourceNotFound(params.sessionId);
+  }
+
+  // Process the prompt and generate a response
+  await _processPrompt(params);
+
+  return PromptResponse(stopReason: StopReason.endTurn);
+}
+```
+
+### Sending Updates to the Client
+
+Use the connection to send real-time updates:
+
+```dart
+Future<void> _sendTextUpdate(String sessionId, String text) async {
+  await _connection.sessionUpdate(
+    SessionNotification(
+      sessionId: sessionId,
+      update: AgentMessageChunkSessionUpdate(
+        content: TextContentBlock(text: text),
+      ),
+    ),
+  );
+}
+```
+
+### Tool Call Updates
+
+Report tool execution progress:
+
+```dart
+// Create a tool call
+await _connection.sessionUpdate(
+  SessionNotification(
+    sessionId: sessionId,
+    update: ToolCallSessionUpdate(
+      toolCallId: "call_1",
+      title: "Reading project files",
+      kind: ToolKind.read,
+      status: ToolCallStatus.pending,
+      locations: [ToolCallLocation(path: "/project/README.md")],
+      rawInput: {"path": "/project/README.md"},
+    ),
+  ),
+);
+
+// Update the tool call status
+await _connection.sessionUpdate(
+  SessionNotification(
+    sessionId: sessionId,
+    update: ToolCallUpdateSessionUpdate(
+      toolCallId: "call_1",
+      status: ToolCallStatus.completed,
+      content: [
+        ContentToolCallContent(
+          content: TextContentBlock(text: "File contents here..."),
+        ),
+      ],
+    ),
+  ),
+);
+```
+
+### Cancellation Handling
+
+Implement graceful cancellation:
+
+```dart
+@override
+Future<void> cancel(CancelNotification params) async {
+  final session = _sessions[params.sessionId];
+  if (session?.pendingPrompt != null) {
+    session!.pendingPrompt!.complete();
+  }
+}
+```
+
+<Tip>
+  Always check if a completer is already completed before calling `complete()` to avoid exceptions.
+</Tip>
+
+## Error Handling
+
+Use `RequestError` for protocol-level errors:
+
+```dart
+// Resource not found
+throw RequestError.resourceNotFound(sessionId);
+
+// Method not implemented
+throw RequestError.methodNotFound('session/load');
+
+// Authentication required
+throw RequestError.authRequired();
+
+// Invalid parameters
+throw RequestError.invalidParams({'field': 'sessionId'});
+
+// Internal error
+throw RequestError.internalError('Something went wrong');
+```
+
+## Running the Agent
+
+The agent runs as a stdio-based process:
+
+```dart
+void main() {
+  final stream = ndJsonStream(stdin, stdout);
+  final connection = AgentSideConnection(
+    (conn) => ExampleAgent(conn),
+    stream,
+  );
+  
+  // The connection handles all incoming requests automatically
+  // Keep the program running
+}
+```
+
+## Next Steps
+
+<CardGroup cols={2}>
+  <Card title="Basic Client" icon="desktop" href="/examples/basic-client">
+    Learn how to create a client that connects to your agent
+  </Card>
+  <Card title="Advanced Usage" icon="wand-magic-sparkles" href="/examples/advanced-usage">
+    Explore advanced patterns like permissions and protocol cancellation
+  </Card>
+  <Card title="Core Concepts" icon="book" href="/concepts/connections">
+    Understand the underlying architecture
+  </Card>
+  <Card title="API Reference" icon="code" href="/api/agent">
+    Explore the complete Agent interface
+  </Card>
+</CardGroup>

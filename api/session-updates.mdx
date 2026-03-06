@@ -1,0 +1,315 @@
+---
+title: "Session Updates"
+description: "Types of session updates sent via SessionNotification"
+---
+
+## Overview
+
+Session updates are sent from agents to clients via `SessionNotification` to provide real-time feedback during prompt processing. Each update type carries different information about the agent's progress.
+
+See [Agent Reports Output](https://agentclientprotocol.com/protocol/prompt-turn#3-agent-reports-output) in the protocol documentation.
+
+## Message Updates
+
+### UserMessageChunkSessionUpdate
+
+Streams content that is part of the user's message (typically when loading a session).
+
+<ResponseField name="content" type="ContentBlock" required>
+  A content block from the user's message (text, image, audio, resource, etc.)
+</ResponseField>
+
+### AgentMessageChunkSessionUpdate
+
+Streams content that is part of the agent's response.
+
+<ResponseField name="content" type="ContentBlock" required>
+  A content block from the agent's message (text, image, audio, resource, etc.)
+</ResponseField>
+
+### AgentThoughtChunkSessionUpdate
+
+Streams the agent's internal thoughts or reasoning process.
+
+<ResponseField name="content" type="ContentBlock" required>
+  A content block containing the agent's internal thoughts (typically text)
+</ResponseField>
+
+## Tool Call Updates
+
+### ToolCallSessionUpdate
+
+Creates a new tool call. See [Tool Calls](https://agentclientprotocol.com/protocol/tool-calls).
+
+<ResponseField name="toolCallId" type="String" required>
+  Unique identifier for this tool call
+</ResponseField>
+
+<ResponseField name="title" type="String" required>
+  Display title for the tool call
+</ResponseField>
+
+<ResponseField name="kind" type="ToolKind">
+  The kind of operation: `read`, `edit`, `delete`, `move`, `search`, `execute`, `think`, `fetch`, `switch_mode`, or `other`
+</ResponseField>
+
+<ResponseField name="status" type="ToolCallStatus">
+  Current status: `pending`, `in_progress`, `completed`, or `failed`
+</ResponseField>
+
+<ResponseField name="content" type="List<ToolCallContent>">
+  Content produced by the tool call. Can include:
+  - `ContentToolCallContent` - Standard content blocks (text, images, etc.)
+  - `DiffToolCallContent` - File diffs
+  - `TerminalToolCallContent` - Terminal output references
+</ResponseField>
+
+<ResponseField name="locations" type="List<ToolCallLocation>">
+  File locations being accessed or modified
+  
+  <Expandable title="ToolCallLocation fields">
+    <ResponseField name="path" type="String" required>
+      The file path
+    </ResponseField>
+    
+    <ResponseField name="line" type="int">
+      Optional line number within the file
+    </ResponseField>
+  </Expandable>
+</ResponseField>
+
+<ResponseField name="rawInput" type="Map<String, dynamic>">
+  Raw input parameters for the tool
+</ResponseField>
+
+<ResponseField name="rawOutput" type="Map<String, dynamic>">
+  Raw output from the tool
+</ResponseField>
+
+<ResponseField name="_meta" type="Map<String, dynamic>">
+  Optional metadata
+</ResponseField>
+
+### ToolCallUpdateSessionUpdate
+
+Updates an existing tool call (identified by `toolCallId`).
+
+<ResponseField name="toolCallId" type="String" required>
+  The ID of the tool call to update
+</ResponseField>
+
+<ResponseField name="title" type="String">
+  Updated display title
+</ResponseField>
+
+<ResponseField name="kind" type="ToolKind">
+  Updated operation kind
+</ResponseField>
+
+<ResponseField name="status" type="ToolCallStatus">
+  Updated status
+</ResponseField>
+
+<ResponseField name="content" type="List<ToolCallContent>">
+  Additional or updated content
+</ResponseField>
+
+<ResponseField name="locations" type="List<ToolCallLocation>">
+  Updated file locations
+</ResponseField>
+
+<ResponseField name="rawInput" type="Map<String, dynamic>">
+  Updated raw input
+</ResponseField>
+
+<ResponseField name="rawOutput" type="Map<String, dynamic>">
+  Updated raw output
+</ResponseField>
+
+<ResponseField name="_meta" type="Map<String, dynamic>">
+  Optional metadata
+</ResponseField>
+
+## Plan Updates
+
+### PlanSessionUpdate
+
+Updates the agent's execution plan. See [Agent Plan](https://agentclientprotocol.com/protocol/agent-plan).
+
+<ResponseField name="entries" type="List<PlanEntry>" required>
+  The complete list of plan entries
+  
+  <Expandable title="PlanEntry fields">
+    <ResponseField name="content" type="String" required>
+      Description of the task or goal
+    </ResponseField>
+    
+    <ResponseField name="priority" type="PlanEntryPriority" required>
+      Priority level: `high`, `medium`, or `low`
+    </ResponseField>
+    
+    <ResponseField name="status" type="PlanEntryStatus" required>
+      Current status: `pending`, `in_progress`, or `completed`
+    </ResponseField>
+  </Expandable>
+</ResponseField>
+
+<ResponseField name="_meta" type="Map<String, dynamic>">
+  Optional metadata
+</ResponseField>
+
+## Commands Update
+
+### AvailableCommandsUpdateSessionUpdate
+
+Updates the list of commands available to the user.
+
+<ResponseField name="availableCommands" type="List<AvailableCommand>" required>
+  List of available commands
+  
+  <Expandable title="AvailableCommand fields">
+    <ResponseField name="name" type="String" required>
+      Command name (e.g., `create_plan`, `research_codebase`)
+    </ResponseField>
+    
+    <ResponseField name="description" type="String" required>
+      Human-readable description of what the command does
+    </ResponseField>
+    
+    <ResponseField name="input" type="UnstructuredCommandInput">
+      Input specification for the command
+      
+      <Expandable title="UnstructuredCommandInput fields">
+        <ResponseField name="hint" type="String" required>
+          A hint to display when input hasn't been provided yet
+        </ResponseField>
+      </Expandable>
+    </ResponseField>
+  </Expandable>
+</ResponseField>
+
+<ResponseField name="_meta" type="Map<String, dynamic>">
+  Optional metadata
+</ResponseField>
+
+## Mode Update
+
+### CurrentModeUpdateSessionUpdate
+
+Notifies about a mode change in the session.
+
+<ResponseField name="currentModeId" type="String" required>
+  The ID of the newly active mode
+</ResponseField>
+
+<ResponseField name="_meta" type="Map<String, dynamic>">
+  Optional metadata
+</ResponseField>
+
+## Configuration Update
+
+### ConfigOptionUpdate
+
+Updates session configuration options.
+
+<ResponseField name="configOptions" type="List<SessionConfigOption>" required>
+  The updated list of configuration options
+  
+  <Expandable title="SessionConfigOption fields">
+    <ResponseField name="id" type="SessionConfigId" required>
+      Unique identifier for this configuration option
+    </ResponseField>
+    
+    <ResponseField name="name" type="String" required>
+      Display name for the option
+    </ResponseField>
+    
+    <ResponseField name="description" type="String">
+      Description of what this option controls
+    </ResponseField>
+    
+    <ResponseField name="category" type="String">
+      Optional category for grouping options
+    </ResponseField>
+    
+    <ResponseField name="type" type="String" default="select">
+      The type of configuration (currently only "select" is supported)
+    </ResponseField>
+    
+    <ResponseField name="currentValue" type="SessionConfigValueId" required>
+      The current selected value
+    </ResponseField>
+    
+    <ResponseField name="options" type="SessionConfigSelectOptions" required>
+      Available options (can be grouped or ungrouped)
+    </ResponseField>
+  </Expandable>
+</ResponseField>
+
+<ResponseField name="_meta" type="Map<String, dynamic>">
+  Optional metadata
+</ResponseField>
+
+## Session Info Update
+
+### SessionInfoUpdate
+
+Updates metadata about the session itself.
+
+<ResponseField name="title" type="String">
+  Updated session title
+</ResponseField>
+
+<ResponseField name="updatedAt" type="String">
+  When the session was last updated (ISO 8601 timestamp)
+</ResponseField>
+
+<ResponseField name="_meta" type="Map<String, dynamic>">
+  Optional metadata
+</ResponseField>
+
+## Usage Update
+
+### UsageUpdate
+
+Provides information about resource usage (e.g., context window).
+
+<ResponseField name="size" type="int" required>
+  Total size of the resource (e.g., maximum context window size)
+</ResponseField>
+
+<ResponseField name="used" type="int" required>
+  Amount currently used
+</ResponseField>
+
+<ResponseField name="cost" type="Cost">
+  Associated cost information
+  
+  <Expandable title="Cost fields">
+    <ResponseField name="amount" type="double" required>
+      The cost amount
+    </ResponseField>
+    
+    <ResponseField name="currency" type="String" required>
+      Currency code (e.g., "USD")
+    </ResponseField>
+  </Expandable>
+</ResponseField>
+
+<ResponseField name="_meta" type="Map<String, dynamic>">
+  Optional metadata
+</ResponseField>
+
+## Unknown Updates
+
+### UnknownSessionUpdate
+
+A fallback type for session updates that don't match any known type. This ensures forward compatibility when new update types are added to the protocol.
+
+<ResponseField name="rawJson" type="Map<String, dynamic>" required>
+  The raw JSON data for the unknown update type
+</ResponseField>
+
+<Info>
+  Clients should handle `UnknownSessionUpdate` gracefully to maintain compatibility with future protocol versions.
+</Info>

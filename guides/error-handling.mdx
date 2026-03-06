@@ -1,0 +1,476 @@
+---
+title: Error Handling
+description: Comprehensive guide to handling errors in the ACP Dart SDK
+---
+
+This guide covers error handling patterns, built-in error types, and best practices for managing errors in ACP applications.
+
+## Error Types
+
+The ACP Dart SDK uses `RequestError` for all protocol-level errors. These errors are automatically converted to JSON-RPC error responses.
+
+### Built-in Error Codes
+
+The SDK provides standard error constructors based on JSON-RPC 2.0 specification:
+
+```dart
+import 'package:acp_dart/acp_dart.dart';
+
+// Parse error (-32700)
+throw RequestError.parseError();
+
+// Invalid request (-32600)
+throw RequestError.invalidRequest();
+
+// Method not found (-32601)
+throw RequestError.methodNotFound('session/load');
+
+// Invalid params (-32602)
+throw RequestError.invalidParams({'reason': 'Session ID is required'});
+
+// Internal error (-32603)
+throw RequestError.internalError('Database connection failed');
+
+// Authentication required (-32000)
+throw RequestError.authRequired({'realm': 'agent-api'});
+
+// Resource not found (-32002)
+throw RequestError.resourceNotFound('/path/to/file.txt');
+
+// Request cancelled (-32800)
+throw RequestError.requestCancelled();
+```
+
+## Agent Error Handling
+
+### Validating Request Parameters
+
+Always validate parameters before processing:
+
+```dart
+@override
+Future<PromptResponse> prompt(PromptRequest params) async {
+  // Validate session exists
+  final session = _sessions[params.sessionId];
+  if (session == null) {
+    throw RequestError.resourceNotFound(params.sessionId);
+  }
+  
+  // Validate prompt content
+  if (params.prompt.isEmpty) {
+    throw RequestError.invalidParams({
+      'reason': 'Prompt cannot be empty',
+    });
+  }
+  
+  // Process the prompt
+  // ...
+}
+```
+
+### Handling Tool Execution Errors
+
+Report tool failures through status updates:
+
+```dart
+try {
+  // Execute tool
+  final result = await executeTool(toolCall);
+  
+  // Report success
+  await _connection.sessionUpdate(
+    SessionNotification(
+      sessionId: sessionId,
+      update: ToolCallUpdateSessionUpdate(
+        toolCallId: toolCall.id,
+        status: ToolCallStatus.completed,
+        content: [ContentToolCallContent(content: result)],
+      ),
+    ),
+  );
+} catch (e) {
+  // Report failure
+  await _connection.sessionUpdate(
+    SessionNotification(
+      sessionId: sessionId,
+      update: ToolCallUpdateSessionUpdate(
+        toolCallId: toolCall.id,
+        status: ToolCallStatus.failed,
+        content: [
+          ContentToolCallContent(
+            content: TextContentBlock(
+              text: 'Tool execution failed: $e',
+            ),
+          ),
+        ],
+      ),
+    ),
+  );
+}
+```
+
+### Handling Authentication Errors
+
+Require authentication before allowing operations:
+
+```dart
+@override
+Future<NewSessionResponse> newSession(NewSessionRequest params) async {
+  if (!_isAuthenticated) {
+    throw RequestError.authRequired({
+      'availableMethods': ['api_key', 'oauth'],
+    });
+  }
+  
+  // Proceed with session creation
+  // ...
+}
+```
+
+### Graceful Cancellation
+
+Handle cancellation requests properly:
+
+```dart
+class AgentSession {
+  Completer<void>? pendingPrompt;
+}
+
+@override
+Future<PromptResponse> prompt(PromptRequest params) async {
+  final session = _sessions[params.sessionId]!;
+  
+  // Set up cancellation support
+  final completer = Completer<void>();
+  session.pendingPrompt = completer;
+  
+  try {
+    await _processPrompt(
+      params,
+      cancelStream: completer.future.asStream(),
+    );
+    
+    return PromptResponse(stopReason: StopReason.endTurn);
+  } catch (e) {
+    // Check if cancelled
+    if (completer.isCompleted) {
+      return PromptResponse(stopReason: StopReason.cancelled);
+    }
+    rethrow;
+  } finally {
+    session.pendingPrompt = null;
+  }
+}
+
+@override
+Future<void> cancel(CancelNotification params) async {
+  final session = _sessions[params.sessionId];
+  
+  if (session?.pendingPrompt != null && 
+      !session!.pendingPrompt!.isCompleted) {
+    session.pendingPrompt!.complete();
+  }
+}
+```
+
+## Client Error Handling
+
+### Handling Connection Errors
+
+Handle connection failures gracefully:
+
+```dart
+try {
+  final initResult = await connection.initialize(
+    InitializeRequest(
+      protocolVersion: 1,
+      clientCapabilities: ClientCapabilities(),
+    ),
+  );
+  print('Connected successfully');
+} catch (e) {
+  print('Failed to connect: $e');
+  // Retry or exit
+}
+```
+
+### Handling File System Errors
+
+Provide meaningful errors for file operations:
+
+```dart
+@override
+Future<ReadTextFileResponse> readTextFile(
+  ReadTextFileRequest params,
+) async {
+  try {
+    final file = File(params.path);
+    
+    if (!await file.exists()) {
+      throw RequestError.resourceNotFound(params.path);
+    }
+    
+    final content = await file.readAsString();
+    return ReadTextFileResponse(content: content);
+    
+  } on FileSystemException catch (e) {
+    throw RequestError.internalError({
+      'message': 'File system error',
+      'details': e.message,
+      'path': params.path,
+    });
+  } catch (e) {
+    throw RequestError.internalError({
+      'message': 'Unexpected error reading file',
+      'error': e.toString(),
+    });
+  }
+}
+
+@override
+Future<WriteTextFileResponse> writeTextFile(
+  WriteTextFileRequest params,
+) async {
+  try {
+    final file = File(params.path);
+    
+    // Check permissions
+    if (await file.exists()) {
+      final stat = await file.stat();
+      if (stat.mode & 0x80 == 0) {  // Not writable
+        throw RequestError.invalidParams({
+          'reason': 'File is not writable',
+          'path': params.path,
+        });
+      }
+    }
+    
+    await file.writeAsString(params.content);
+    return WriteTextFileResponse();
+    
+  } on FileSystemException catch (e) {
+    throw RequestError.internalError({
+      'message': 'Failed to write file',
+      'details': e.message,
+    });
+  }
+}
+```
+
+### Handling Terminal Errors
+
+Manage terminal operation failures:
+
+```dart
+@override
+Future<CreateTerminalResponse> createTerminal(
+  CreateTerminalRequest params,
+) async {
+  try {
+    final process = await Process.start(
+      params.command,
+      params.args ?? [],
+      workingDirectory: params.cwd,
+    );
+    
+    final terminalId = _generateTerminalId();
+    _terminals[terminalId] = process;
+    
+    return CreateTerminalResponse(terminalId: terminalId);
+    
+  } on ProcessException catch (e) {
+    throw RequestError.internalError({
+      'message': 'Failed to start process',
+      'command': params.command,
+      'error': e.message,
+    });
+  } catch (e) {
+    throw RequestError.internalError({
+      'message': 'Unexpected error creating terminal',
+      'error': e.toString(),
+    });
+  }
+}
+
+@override
+Future<TerminalOutputResponse> terminalOutput(
+  TerminalOutputRequest params,
+) async {
+  final process = _terminals[params.terminalId];
+  
+  if (process == null) {
+    throw RequestError.resourceNotFound(
+      'Terminal ${params.terminalId} not found',
+    );
+  }
+  
+  // Get output
+  // ...
+}
+```
+
+### Handling Permission Request Errors
+
+Manage permission dialog failures:
+
+```dart
+@override
+Future<RequestPermissionResponse> requestPermission(
+  RequestPermissionRequest params,
+) async {
+  try {
+    // Show permission dialog to user
+    final choice = await _showPermissionDialog(params);
+    
+    return RequestPermissionResponse(
+      outcome: SelectedOutcome(optionId: choice),
+    );
+    
+  } on UserCancelledException {
+    return RequestPermissionResponse(
+      outcome: CancelledOutcome(),
+    );
+  } catch (e) {
+    // Log error but still return a valid response
+    print('Error showing permission dialog: $e');
+    return RequestPermissionResponse(
+      outcome: CancelledOutcome(),
+    );
+  }
+}
+```
+
+## Custom Error Codes
+
+Create custom error codes for application-specific errors:
+
+```dart
+class CustomErrors {
+  // Custom error codes should be in the range -32000 to -32099
+  static RequestError sessionLimitExceeded() {
+    return RequestError(
+      -32001,
+      'Session limit exceeded',
+      {'maxSessions': 10},
+    );
+  }
+  
+  static RequestError modelNotAvailable(String modelId) {
+    return RequestError(
+      -32003,
+      'Model not available',
+      {'modelId': modelId},
+    );
+  }
+  
+  static RequestError rateLimitExceeded(int retryAfter) {
+    return RequestError(
+      -32004,
+      'Rate limit exceeded',
+      {'retryAfter': retryAfter},
+    );
+  }
+}
+
+// Usage
+if (_sessions.length >= maxSessions) {
+  throw CustomErrors.sessionLimitExceeded();
+}
+```
+
+## Error Response Structure
+
+When you throw a `RequestError`, it's automatically converted to this JSON-RPC format:
+
+```json
+{
+  "jsonrpc": "2.0",
+  "id": 1,
+  "error": {
+    "code": -32002,
+    "message": "Resource not found",
+    "data": {
+      "uri": "/path/to/file.txt"
+    }
+  }
+}
+```
+
+## Best Practices
+
+<Note>
+Always include helpful context in error data to aid debugging.
+</Note>
+
+### Do:
+
+✅ Validate inputs early and throw appropriate errors
+
+```dart
+if (params.sessionId.isEmpty) {
+  throw RequestError.invalidParams({'reason': 'sessionId cannot be empty'});
+}
+```
+
+✅ Provide detailed error context
+
+```dart
+throw RequestError.resourceNotFound({
+  'path': params.path,
+  'reason': 'File does not exist or is not accessible',
+});
+```
+
+✅ Log errors for debugging
+
+```dart
+catch (e, stackTrace) {
+  print('Error processing request: $e');
+  print(stackTrace);
+  throw RequestError.internalError();
+}
+```
+
+### Don't:
+
+❌ Expose sensitive information in errors
+
+```dart
+// Bad: exposes system paths
+throw RequestError.internalError('/home/user/.secret/api_key not found');
+```
+
+❌ Swallow errors silently
+
+```dart
+// Bad: errors are ignored
+try {
+  await riskyOperation();
+} catch (e) {
+  // Silent failure
+}
+```
+
+❌ Use generic errors without context
+
+```dart
+// Bad: no useful information
+throw RequestError.internalError();
+
+// Good: includes context
+throw RequestError.internalError({
+  'operation': 'database query',
+  'error': e.toString(),
+});
+```
+
+## Next Steps
+
+<CardGroup cols={2}>
+  <Card title="Building an Agent" icon="robot" href="/guides/building-agent">
+    Create your first ACP agent
+  </Card>
+  <Card title="Building a Client" icon="computer" href="/guides/building-client">
+    Create your first ACP client
+  </Card>
+</CardGroup>

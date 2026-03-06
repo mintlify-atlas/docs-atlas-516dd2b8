@@ -1,0 +1,442 @@
+---
+title: Stable Protocol Features
+description: Production-ready ACP features with full support
+icon: check-circle
+---
+
+All ACP stable protocol features are fully implemented and production-ready in the Dart SDK.
+
+## Agent Initialization
+
+Establish connections and negotiate capabilities between clients and agents.
+
+### Initialize Connection
+
+```dart
+import 'package:acp_dart/acp_dart.dart';
+
+class MyAgent implements Agent {
+  @override
+  Future<InitializeResponse> initialize(InitializeRequest params) async {
+    return InitializeResponse(
+      protocolVersion: 1,
+      agentCapabilities: AgentCapabilities(
+        loadSession: false,
+        sessionCapabilities: SessionCapabilities(
+          fork: null,
+          list: null,
+          resume: null,
+        ),
+      ),
+      agentInfo: Implementation(
+        name: 'my-agent',
+        version: '1.0.0',
+      ),
+      authMethods: [],
+    );
+  }
+}
+```
+
+<Tip>
+The `initialize` method is called once at the beginning of the connection to negotiate protocol version and exchange capability information.
+</Tip>
+
+## Session Management
+
+Create and manage conversation sessions with full state tracking.
+
+<CardGroup cols={2}>
+  <Card title="session/new" icon="plus">
+    Creates a new conversation session with the agent.
+  </Card>
+  <Card title="session/load" icon="folder-open">
+    Loads an existing session to resume a previous conversation.
+  </Card>
+  <Card title="session/set_mode" icon="toggle-on">
+    Changes the operational mode (e.g., "ask", "code", "architect").
+  </Card>
+  <Card title="session/set_config_option" icon="sliders">
+    Updates session configuration options.
+  </Card>
+</CardGroup>
+
+### Create New Session
+
+```dart
+@override
+Future<NewSessionResponse> newSession(NewSessionRequest params) async {
+  // Create session context
+  final sessionId = generateSessionId();
+  
+  // Connect to MCP servers
+  await connectToMcpServers(params.mcpServers);
+  
+  return NewSessionResponse(
+    sessionId: sessionId,
+    modes: SessionModeState(
+      availableModes: [
+        SessionMode(
+          id: 'ask',
+          name: 'Ask',
+          description: 'Q&A mode for quick questions',
+        ),
+        SessionMode(
+          id: 'code',
+          name: 'Code',
+          description: 'Full coding assistance',
+        ),
+      ],
+      currentModeId: 'ask',
+    ),
+  );
+}
+```
+
+### Load Existing Session
+
+```dart
+@override
+Future<LoadSessionResponse>? loadSession(LoadSessionRequest params) async {
+  // Restore session state
+  final session = await restoreSession(params.sessionId);
+  
+  // Replay conversation history via session updates
+  for (final message in session.history) {
+    await connection.sessionUpdate(SessionNotification(
+      sessionId: params.sessionId,
+      update: message,
+    ));
+  }
+  
+  return LoadSessionResponse(
+    modes: session.modes,
+    models: session.models,
+  );
+}
+```
+
+## Prompt Processing
+
+Handle user prompts and stream responses with real-time updates.
+
+### Process Prompt
+
+```dart
+@override
+Future<PromptResponse> prompt(PromptRequest params) async {
+  // Send agent message chunks
+  await connection.sessionUpdate(SessionNotification(
+    sessionId: params.sessionId,
+    update: AgentMessageChunkSessionUpdate(
+      content: TextContentBlock(text: 'Processing your request...'),
+    ),
+  ));
+  
+  // Create and execute tool calls
+  final toolCall = ToolCallSessionUpdate(
+    toolCallId: 'tool_1',
+    title: 'Read File',
+    kind: ToolKind.read,
+    status: ToolCallStatus.inProgress,
+  );
+  
+  await connection.sessionUpdate(SessionNotification(
+    sessionId: params.sessionId,
+    update: toolCall,
+  ));
+  
+  // Request permission if needed
+  final permission = await connection.requestPermission(
+    RequestPermissionRequest(
+      sessionId: params.sessionId,
+      toolCall: ToolCallUpdate(
+        toolCallId: 'tool_1',
+        title: 'Read config.json',
+      ),
+      options: [
+        PermissionOption(
+          optionId: 'allow',
+          name: 'Allow',
+          kind: PermissionOptionKind.allowOnce,
+        ),
+      ],
+    ),
+  );
+  
+  return PromptResponse(
+    stopReason: StopReason.endTurn,
+  );
+}
+```
+
+<Info>
+The `prompt` method handles the entire lifecycle of a prompt turn, including content generation, tool execution, and permission requests.
+</Info>
+
+## Session Updates
+
+Stream real-time progress during prompt processing.
+
+### Content Updates
+
+```dart
+// User message chunks
+await connection.sessionUpdate(SessionNotification(
+  sessionId: sessionId,
+  update: UserMessageChunkSessionUpdate(
+    content: TextContentBlock(text: 'User input...'),
+  ),
+));
+
+// Agent message chunks
+await connection.sessionUpdate(SessionNotification(
+  sessionId: sessionId,
+  update: AgentMessageChunkSessionUpdate(
+    content: TextContentBlock(text: 'Agent response...'),
+  ),
+));
+
+// Agent thought chunks (internal reasoning)
+await connection.sessionUpdate(SessionNotification(
+  sessionId: sessionId,
+  update: AgentThoughtChunkSessionUpdate(
+    content: TextContentBlock(text: 'Analyzing the request...'),
+  ),
+));
+```
+
+### Tool Call Updates
+
+```dart
+// Initial tool call
+await connection.sessionUpdate(SessionNotification(
+  sessionId: sessionId,
+  update: ToolCallSessionUpdate(
+    toolCallId: 'tc_123',
+    title: 'Read File',
+    kind: ToolKind.read,
+    status: ToolCallStatus.pending,
+    locations: [
+      ToolCallLocation(path: '/path/to/file.dart', line: 42),
+    ],
+  ),
+));
+
+// Update tool call progress
+await connection.sessionUpdate(SessionNotification(
+  sessionId: sessionId,
+  update: ToolCallUpdateSessionUpdate(
+    toolCallId: 'tc_123',
+    status: ToolCallStatus.completed,
+    content: [
+      ContentToolCallContent(
+        content: TextContentBlock(text: 'File contents...'),
+      ),
+    ],
+  ),
+));
+```
+
+### Planning Updates
+
+```dart
+// Send execution plan
+await connection.sessionUpdate(SessionNotification(
+  sessionId: sessionId,
+  update: PlanSessionUpdate(
+    entries: [
+      PlanEntry(
+        content: 'Read the configuration file',
+        priority: PlanEntryPriority.high,
+        status: PlanEntryStatus.inProgress,
+      ),
+      PlanEntry(
+        content: 'Update the settings',
+        priority: PlanEntryPriority.medium,
+        status: PlanEntryStatus.pending,
+      ),
+    ],
+  ),
+));
+
+// Update available commands
+await connection.sessionUpdate(SessionNotification(
+  sessionId: sessionId,
+  update: AvailableCommandsUpdateSessionUpdate(
+    availableCommands: [
+      AvailableCommand(
+        name: 'create_plan',
+        description: 'Create an execution plan',
+      ),
+    ],
+  ),
+));
+```
+
+## File System Operations
+
+Read and write text files within the client's environment.
+
+<AccordionGroup>
+  <Accordion title="fs/read_text_file">
+    ```dart
+    // Agent calls client to read a file
+    final response = await connection.readTextFile(
+      ReadTextFileRequest(
+        sessionId: sessionId,
+        path: '/path/to/file.txt',
+        line: 0,  // Optional: start line
+        limit: 100,  // Optional: max lines
+      ),
+    );
+    
+    print('File contents: ${response.content}');
+    ```
+    
+    <Note>
+    Only available if the client advertises the `fs.readTextFile` capability.
+    </Note>
+  </Accordion>
+  
+  <Accordion title="fs/write_text_file">
+    ```dart
+    // Agent calls client to write a file
+    await connection.writeTextFile(
+      WriteTextFileRequest(
+        sessionId: sessionId,
+        path: '/path/to/output.txt',
+        content: 'New file contents',
+      ),
+    );
+    ```
+    
+    <Note>
+    Only available if the client advertises the `fs.writeTextFile` capability.
+    </Note>
+  </Accordion>
+</AccordionGroup>
+
+## Terminal Operations
+
+Create and manage terminal sessions for command execution.
+
+### Complete Terminal Workflow
+
+```dart
+// Create terminal
+final terminalResponse = await connection.createTerminal(
+  CreateTerminalRequest(
+    sessionId: sessionId,
+    command: 'npm',
+    args: ['install'],
+    cwd: '/project/path',
+    env: [
+      EnvVariable(name: 'NODE_ENV', value: 'development'),
+    ],
+  ),
+);
+
+final terminalId = terminalResponse.terminalId;
+
+// Get current output
+final output = await connection.terminalOutput(
+  TerminalOutputRequest(
+    sessionId: sessionId,
+    terminalId: terminalId,
+  ),
+);
+
+print('Output: ${output.output}');
+print('Truncated: ${output.truncated}');
+
+// Wait for completion
+final exitStatus = await connection.waitForTerminalExit(
+  WaitForTerminalExitRequest(
+    sessionId: sessionId,
+    terminalId: terminalId,
+  ),
+);
+
+print('Exit code: ${exitStatus.exitCode}');
+
+// Clean up
+await connection.releaseTerminal(
+  ReleaseTerminalRequest(
+    sessionId: sessionId,
+    terminalId: terminalId,
+  ),
+);
+```
+
+<Tip>
+Use `TerminalHandle` for automatic resource management:
+
+```dart
+final handle = TerminalHandle(terminalId, sessionId, connection);
+try {
+  final output = await handle.currentOutput();
+  final exit = await handle.waitForExit();
+} finally {
+  await handle.dispose();  // Auto-releases
+}
+```
+</Tip>
+
+## Request Cancellation
+
+Cancel ongoing operations using protocol-level notifications.
+
+### Session Cancellation
+
+```dart
+// Client cancels an ongoing prompt
+await connection.cancel(
+  CancelNotification(sessionId: sessionId),
+);
+```
+
+### Protocol-Level Cancellation
+
+```dart
+// Cancel a specific JSON-RPC request
+await connection.sendCancelRequest(
+  CancelRequestNotification(requestId: requestId),
+);
+
+// Or cancel a pending request
+final wasCancelled = await connection.cancelPendingRequest(
+  requestId,
+  meta: {'reason': 'User cancelled'},
+);
+```
+
+<Info>
+Cancelled requests receive a JSON-RPC error response with code `-32800` (Request Cancelled).
+</Info>
+
+## Error Handling
+
+The SDK maps errors to appropriate JSON-RPC error codes:
+
+| Error Type | JSON-RPC Code | Description |
+|------------|---------------|-------------|
+| Parameter validation | `-32602` | Invalid params |
+| Unexpected failures | `-32603` | Internal error |
+| Request cancelled | `-32800` | Cancelled |
+| Authentication required | `-32000` | Auth required |
+| Resource not found | `-32002` | Resource not found |
+| Method not found | `-32601` | Method not found |
+
+```dart
+import 'package:acp_dart/acp_dart.dart';
+
+// Throw specific errors
+throw RequestError.invalidParams({'field': 'sessionId required'});
+throw RequestError.authRequired();
+throw RequestError.resourceNotFound('/path/to/file');
+```
+
+<Card title="Next: Unstable Features" icon="arrow-right" href="/protocol/unstable-features">
+  Explore experimental protocol features
+</Card>

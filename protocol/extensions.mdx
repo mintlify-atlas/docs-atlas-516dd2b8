@@ -1,0 +1,557 @@
+---
+title: Protocol Extensions
+description: Implement custom methods and notifications beyond the ACP specification
+icon: puzzle-piece
+---
+
+The ACP Dart SDK provides full support for protocol extensions, allowing you to implement custom methods and notifications that go beyond the standard ACP specification.
+
+## Overview
+
+Extension methods enable you to:
+
+- Add domain-specific functionality to your agent or client
+- Experiment with new features before they're added to ACP
+- Create proprietary features for specialized use cases
+- Bridge to other protocols or systems
+
+<Info>
+ACP reserves extension methods under the `_` prefix. All custom method names should start with an underscore.
+</Info>
+
+## Extension Methods
+
+Extension methods are request-response operations that aren't part of the standard ACP specification.
+
+### Agent-Side Extensions
+
+Implement custom methods that clients can call on your agent.
+
+```dart
+import 'package:acp_dart/acp_dart.dart';
+
+class MyAgent implements Agent {
+  // ... standard ACP methods ...
+  
+  @override
+  Future<Map<String, dynamic>>? extMethod(
+    String method,
+    Map<String, dynamic> params,
+  ) async {
+    switch (method) {
+      case '_analyze_codebase':
+        return await analyzeCodebase(params);
+      
+      case '_get_project_stats':
+        return await getProjectStats(params);
+      
+      case '_custom_tool':
+        return await executeCustomTool(params);
+      
+      default:
+        // Return null to indicate method not found
+        return null;
+    }
+  }
+  
+  Future<Map<String, dynamic>> analyzeCodebase(
+    Map<String, dynamic> params,
+  ) async {
+    final path = params['path'] as String;
+    final depth = params['depth'] as int? ?? 3;
+    
+    // Your custom logic
+    final analysis = await performAnalysis(path, depth);
+    
+    return {
+      'totalFiles': analysis.totalFiles,
+      'languages': analysis.languages,
+      'complexity': analysis.complexity,
+    };
+  }
+}
+```
+
+### Client-Side Extensions
+
+Implement custom methods that agents can call on your client.
+
+```dart
+class MyClient implements Client {
+  // ... standard ACP methods ...
+  
+  @override
+  Future<Map<String, dynamic>>? extMethod(
+    String method,
+    Map<String, dynamic> params,
+  ) async {
+    switch (method) {
+      case '_open_browser':
+        return await openBrowser(params);
+      
+      case '_show_notification':
+        return await showNotification(params);
+      
+      default:
+        return null;
+    }
+  }
+  
+  Future<Map<String, dynamic>> openBrowser(
+    Map<String, dynamic> params,
+  ) async {
+    final url = params['url'] as String;
+    final newTab = params['newTab'] as bool? ?? true;
+    
+    await launchUrl(url, newTab: newTab);
+    
+    return {'success': true};
+  }
+}
+```
+
+### Calling Extension Methods
+
+<Tabs>
+  <Tab title="From Client">
+    ```dart
+    // Client calls agent extension method
+    final response = await connection.extMethod(
+      '_analyze_codebase',
+      {
+        'path': '/project/src',
+        'depth': 5,
+      },
+    );
+    
+    print('Total files: ${response['totalFiles']}');
+    print('Languages: ${response['languages']}');
+    ```
+  </Tab>
+  
+  <Tab title="From Agent">
+    ```dart
+    // Agent calls client extension method
+    final response = await connection.extMethod(
+      '_open_browser',
+      {
+        'url': 'https://example.com',
+        'newTab': true,
+      },
+    );
+    
+    if (response['success'] == true) {
+      print('Browser opened successfully');
+    }
+    ```
+  </Tab>
+</Tabs>
+
+## Extension Notifications
+
+Extension notifications are one-way messages that don't expect a response.
+
+### Sending Notifications
+
+```dart
+class MyAgent implements Agent {
+  // ... standard methods ...
+  
+  @override
+  Future<void>? extNotification(
+    String method,
+    Map<String, dynamic> params,
+  ) async {
+    switch (method) {
+      case '_progress_update':
+        await handleProgressUpdate(params);
+        break;
+      
+      case '_custom_event':
+        await handleCustomEvent(params);
+        break;
+    }
+  }
+}
+
+// Send extension notification from the opposite side
+await connection.extNotification(
+  '_progress_update',
+  {
+    'stage': 'analyzing',
+    'progress': 0.45,
+    'message': 'Analyzing dependencies...',
+  },
+);
+```
+
+## Protocol Integration
+
+Extension methods are fully integrated into the SDK's connection handling:
+
+```dart
+// From lib/src/acp.dart (lines 524-535)
+Future<dynamic> requestHandler(String method, dynamic params) async {
+  switch (method) {
+    // ... standard ACP methods ...
+    
+    default:
+      if (method.startsWith('_')) {
+        final result = await agent.extMethod(
+          method,
+          params as Map<String, dynamic>,
+        );
+        if (result == null) {
+          throw RequestError.methodNotFound(method);
+        }
+        return result;
+      }
+      throw RequestError.methodNotFound(method);
+  }
+}
+```
+
+<Note>
+**Key Behaviors:**
+- Method names are passed through exactly as provided
+- The leading `_` is **not** automatically added
+- Returning `null` from `extMethod` results in a `Method not found` error
+- Extension methods follow the same error handling as standard methods
+</Note>
+
+## Type Safety with Extensions
+
+While extension methods use generic `Map<String, dynamic>` for parameters and responses, you can create type-safe wrappers:
+
+<CodeGroup>
+```dart Extension Request Class
+class AnalyzeCodebaseRequest {
+  final String path;
+  final int depth;
+  final List<String>? excludePatterns;
+  
+  AnalyzeCodebaseRequest({
+    required this.path,
+    this.depth = 3,
+    this.excludePatterns,
+  });
+  
+  Map<String, dynamic> toJson() => {
+    'path': path,
+    'depth': depth,
+    if (excludePatterns != null) 'excludePatterns': excludePatterns,
+  };
+  
+  factory AnalyzeCodebaseRequest.fromJson(Map<String, dynamic> json) =>
+    AnalyzeCodebaseRequest(
+      path: json['path'] as String,
+      depth: json['depth'] as int? ?? 3,
+      excludePatterns: (json['excludePatterns'] as List?)?.cast<String>(),
+    );
+}
+```
+
+```dart Extension Response Class
+class AnalyzeCodebaseResponse {
+  final int totalFiles;
+  final Map<String, int> languages;
+  final double complexity;
+  
+  AnalyzeCodebaseResponse({
+    required this.totalFiles,
+    required this.languages,
+    required this.complexity,
+  });
+  
+  factory AnalyzeCodebaseResponse.fromJson(Map<String, dynamic> json) =>
+    AnalyzeCodebaseResponse(
+      totalFiles: json['totalFiles'] as int,
+      languages: (json['languages'] as Map).cast<String, int>(),
+      complexity: (json['complexity'] as num).toDouble(),
+    );
+  
+  Map<String, dynamic> toJson() => {
+    'totalFiles': totalFiles,
+    'languages': languages,
+    'complexity': complexity,
+  };
+}
+```
+
+```dart Type-Safe Wrapper
+extension AgentExtensions on AgentSideConnection {
+  Future<AnalyzeCodebaseResponse> analyzeCodebase(
+    AnalyzeCodebaseRequest request,
+  ) async {
+    final response = await extMethod(
+      '_analyze_codebase',
+      request.toJson(),
+    );
+    return AnalyzeCodebaseResponse.fromJson(response!);
+  }
+}
+
+// Usage
+final analysis = await connection.analyzeCodebase(
+  AnalyzeCodebaseRequest(
+    path: '/project/src',
+    depth: 5,
+    excludePatterns: ['*.test.dart'],
+  ),
+);
+
+print('Total files: ${analysis.totalFiles}');
+```
+</CodeGroup>
+
+## Best Practices
+
+<CardGroup cols={2}>
+  <Card title="Naming Conventions" icon="tag">
+    - Always prefix with `_`
+    - Use lowercase with underscores
+    - Be descriptive: `_analyze_codebase` not `_analyze`
+    - Namespace for clarity: `_myapp_custom_feature`
+  </Card>
+  
+  <Card title="Error Handling" icon="triangle-exclamation">
+    - Return `null` for unsupported methods
+    - Throw `RequestError` for known error cases
+    - Use standard JSON-RPC error codes
+    - Include helpful error messages
+  </Card>
+  
+  <Card title="Versioning" icon="code-branch">
+    - Include version in method name if needed: `_myfeature_v2`
+    - Document schema changes clearly
+    - Support backward compatibility when possible
+    - Deprecate old versions gracefully
+  </Card>
+  
+  <Card title="Documentation" icon="book">
+    - Document expected parameters
+    - Document response format
+    - Provide usage examples
+    - Note any side effects
+  </Card>
+</CardGroup>
+
+## Error Handling
+
+```dart
+@override
+Future<Map<String, dynamic>>? extMethod(
+  String method,
+  Map<String, dynamic> params,
+) async {
+  try {
+    switch (method) {
+      case '_risky_operation':
+        // Validate parameters
+        if (params['path'] == null) {
+          throw RequestError.invalidParams(
+            {'error': 'path parameter is required'},
+          );
+        }
+        
+        // Execute operation
+        return await performOperation(params);
+      
+      default:
+        return null;  // Method not found
+    }
+  } catch (e) {
+    if (e is RequestError) {
+      rethrow;
+    }
+    // Map unexpected errors to internal error
+    throw RequestError.internalError(
+      {'message': e.toString()},
+    );
+  }
+}
+```
+
+## Capability Discovery
+
+While ACP doesn't have a standard mechanism for advertising extension methods, you can implement your own:
+
+```dart
+@override
+Future<Map<String, dynamic>>? extMethod(
+  String method,
+  Map<String, dynamic> params,
+) async {
+  switch (method) {
+    case '_list_capabilities':
+      return {
+        'extensions': [
+          {
+            'method': '_analyze_codebase',
+            'description': 'Analyzes codebase structure and complexity',
+            'params': {
+              'path': 'string (required)',
+              'depth': 'int (optional, default: 3)',
+            },
+          },
+          {
+            'method': '_get_project_stats',
+            'description': 'Returns project statistics',
+            'params': {},
+          },
+        ],
+      };
+    
+    // ... other methods ...
+  }
+}
+```
+
+## Testing Extensions
+
+```dart
+import 'package:test/test.dart';
+import 'package:acp_dart/acp_dart.dart';
+
+void main() {
+  group('Extension Methods', () {
+    test('_analyze_codebase returns analysis', () async {
+      final agent = TestAgent();
+      
+      final result = await agent.extMethod(
+        '_analyze_codebase',
+        {'path': '/test/path'},
+      );
+      
+      expect(result?['totalFiles'], greaterThan(0));
+      expect(result?['languages'], isA<Map>());
+    });
+    
+    test('unknown extension returns null', () async {
+      final agent = TestAgent();
+      
+      final result = await agent.extMethod(
+        '_unknown_method',
+        {},
+      );
+      
+      expect(result, isNull);
+    });
+  });
+}
+```
+
+## Real-World Examples
+
+<AccordionGroup>
+  <Accordion title="IDE Integration Extension">
+    ```dart
+    // Extension for IDE-specific features
+    @override
+    Future<Map<String, dynamic>>? extMethod(
+      String method,
+      Map<String, dynamic> params,
+    ) async {
+      switch (method) {
+        case '_jump_to_definition':
+          return await jumpToDefinition(
+            file: params['file'],
+            line: params['line'],
+            column: params['column'],
+          );
+        
+        case '_find_references':
+          return await findReferences(
+            symbol: params['symbol'],
+          );
+        
+        case '_trigger_refactor':
+          return await triggerRefactor(
+            type: params['type'],
+            location: params['location'],
+          );
+      }
+    }
+    ```
+  </Accordion>
+  
+  <Accordion title="Project Management Extension">
+    ```dart
+    // Extension for project management features
+    @override
+    Future<Map<String, dynamic>>? extMethod(
+      String method,
+      Map<String, dynamic> params,
+    ) async {
+      switch (method) {
+        case '_create_task':
+          final taskId = await createTask(
+            title: params['title'],
+            description: params['description'],
+            assignee: params['assignee'],
+          );
+          return {'taskId': taskId};
+        
+        case '_list_tasks':
+          final tasks = await listTasks(
+            project: params['project'],
+            status: params['status'],
+          );
+          return {'tasks': tasks};
+      }
+    }
+    ```
+  </Accordion>
+  
+  <Accordion title="Analytics Extension">
+    ```dart
+    // Extension for analytics and telemetry
+    @override
+    Future<void>? extNotification(
+      String method,
+      Map<String, dynamic> params,
+    ) async {
+      switch (method) {
+        case '_log_event':
+          await logAnalyticsEvent(
+            event: params['event'],
+            properties: params['properties'],
+          );
+          break;
+        
+        case '_track_error':
+          await trackError(
+            error: params['error'],
+            stackTrace: params['stackTrace'],
+            context: params['context'],
+          );
+          break;
+      }
+    }
+    ```
+  </Accordion>
+</AccordionGroup>
+
+## Protocol Compliance
+
+Extension methods complement but don't replace standard ACP methods:
+
+<Check>
+**Do:**
+- Use extensions for optional, specialized features
+- Implement all required ACP methods
+- Prefix all custom methods with `_`
+- Handle unsupported methods gracefully
+</Check>
+
+<Warning>
+**Don't:**
+- Use extensions to avoid implementing standard methods
+- Expect all clients to support your extensions
+- Break ACP semantics with custom methods
+- Use non-prefixed names for extensions
+</Warning>
+
+<Card title="Back to Support Matrix" icon="arrow-left" href="/protocol/support-matrix">
+  Review all supported protocol features
+</Card>

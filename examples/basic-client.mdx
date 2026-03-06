@@ -1,0 +1,532 @@
+---
+title: 'Basic Client Implementation'
+description: 'Learn how to create a client that connects to an ACP agent and handles permissions, file operations, and session updates'
+icon: 'desktop'
+---
+
+## Overview
+
+A client implements the `Client` interface to handle requests from agents, including permission prompts, file system operations, and session updates. This guide shows you how to build a complete client.
+
+## Complete Example
+
+Here's a fully functional client that connects to an agent:
+
+```dart
+import 'dart:io';
+import 'dart:convert';
+import 'package:acp_dart/acp_dart.dart';
+
+class ExampleClient implements Client {
+  @override
+  Future<RequestPermissionResponse> requestPermission(
+    RequestPermissionRequest params,
+  ) async {
+    print('\n🔐 Permission requested: ${params.toolCall.title}');
+
+    print('\nOptions:');
+    for (int i = 0; i < params.options.length; i++) {
+      final option = params.options[i];
+      print('   ${i + 1}. ${option.name}');
+    }
+
+    while (true) {
+      stdout.write('\nChoose an option: ');
+      stdout.flush();
+      String? answer = stdin.readLineSync();
+      
+      if (answer == null) {
+        throw RequestError.internalError('Unable to read user input');
+      }
+      
+      String trimmedAnswer = answer.trim();
+      int? optionIndex = int.tryParse(trimmedAnswer);
+      
+      if (optionIndex != null &&
+          optionIndex > 0 &&
+          optionIndex <= params.options.length) {
+        return RequestPermissionResponse(
+          outcome: SelectedOutcome(
+            optionId: params.options[optionIndex - 1].optionId,
+          ),
+        );
+      } else {
+        print('Invalid option. Please try again.');
+      }
+    }
+  }
+
+  @override
+  Future<void> sessionUpdate(SessionNotification params) async {
+    final update = params.update;
+
+    if (update is AgentMessageChunkSessionUpdate) {
+      if (update.content is TextContentBlock) {
+        print((update.content as TextContentBlock).text);
+      } else {
+        print('[${update.content.runtimeType}]');
+      }
+    } else if (update is ToolCallSessionUpdate) {
+      print('\n🔧 ${update.title} (${update.status})');
+    } else if (update is ToolCallUpdateSessionUpdate) {
+      print('\n🔧 Tool call `${update.toolCallId}` updated: ${update.status}\n');
+    }
+  }
+
+  @override
+  Future<WriteTextFileResponse> writeTextFile(
+    WriteTextFileRequest params,
+  ) async {
+    stderr.writeln('[Client] Writing to file: ${params.path}');
+    // Implement actual file writing logic here
+    return WriteTextFileResponse();
+  }
+
+  @override
+  Future<ReadTextFileResponse> readTextFile(ReadTextFileRequest params) async {
+    stderr.writeln('[Client] Reading file: ${params.path}');
+    // Implement actual file reading logic here
+    return ReadTextFileResponse(content: 'Mock file content');
+  }
+
+  @override
+  Future<CreateTerminalResponse> createTerminal(
+    CreateTerminalRequest params,
+  ) async {
+    stderr.writeln('[Client] Creating terminal: ${params.command}');
+    return CreateTerminalResponse(terminalId: 'mock-terminal-id');
+  }
+
+  @override
+  Future<TerminalOutputResponse> terminalOutput(
+    TerminalOutputRequest params,
+  ) async {
+    return TerminalOutputResponse(output: '', truncated: false);
+  }
+
+  @override
+  Future<ReleaseTerminalResponse> releaseTerminal(
+    ReleaseTerminalRequest params,
+  ) async {
+    return ReleaseTerminalResponse();
+  }
+
+  @override
+  Future<WaitForTerminalExitResponse> waitForTerminalExit(
+    WaitForTerminalExitRequest params,
+  ) async {
+    return WaitForTerminalExitResponse(exitCode: 0);
+  }
+
+  @override
+  Future<KillTerminalCommandResponse> killTerminal(
+    KillTerminalCommandRequest params,
+  ) async {
+    return KillTerminalCommandResponse();
+  }
+
+  @override
+  Future<Map<String, dynamic>>? extMethod(
+    String method,
+    Map<String, dynamic> params,
+  ) async {
+    stderr.writeln('[Client] Extension method: $method');
+    return {};
+  }
+
+  @override
+  Future<void>? extNotification(
+    String method,
+    Map<String, dynamic> params,
+  ) async {
+    stderr.writeln('[Client] Extension notification: $method');
+  }
+}
+
+Future<void> main() async {
+  // Spawn the agent as a subprocess
+  final agentProcess = await Process.start('dart', [
+    'run',
+    'example/agent.dart',
+  ]);
+
+  // Create the client connection
+  final client = ExampleClient();
+  final stream = ndJsonStream(agentProcess.stdout, agentProcess.stdin);
+  final connection = ClientSideConnection((agent) => client, stream);
+
+  try {
+    // Initialize the connection
+    final initResult = await connection.initialize(
+      InitializeRequest(
+        protocolVersion: 1,
+        clientCapabilities: ClientCapabilities(
+          fs: FileSystemCapability(
+            readTextFile: true,
+            writeTextFile: true,
+          ),
+          terminal: true,
+        ),
+      ),
+    );
+
+    print('✅ Connected to agent (protocol v${initResult.protocolVersion})');
+
+    // Create a new session
+    final sessionResult = await connection.newSession(
+      NewSessionRequest(
+        cwd: Directory.current.path,
+        mcpServers: [
+          HttpMcpServer(
+            name: 'docs',
+            url: 'https://example.com',
+            headers: const [],
+          ),
+        ],
+      ),
+    );
+
+    print('📝 Created session: ${sessionResult.sessionId}');
+    print('💬 User: Hello, agent!\n');
+    stdout.write(' ');
+
+    // Send a test prompt
+    final promptResult = await connection.prompt(
+      PromptRequest(
+        sessionId: sessionResult.sessionId,
+        prompt: [TextContentBlock(text: 'Hello, agent!')],
+      ),
+    );
+
+    print('\n\n✅ Agent completed with stop reason: ${promptResult.stopReason}');
+  } catch (error) {
+    stderr.writeln('[Client] Error: $error');
+  } finally {
+    agentProcess.kill();
+    exit(0);
+  }
+}
+```
+
+## Key Concepts
+
+### Creating a Connection
+
+Connect to an agent process:
+
+```dart
+// Spawn agent as subprocess
+final agentProcess = await Process.start('dart', ['run', 'agent.dart']);
+
+// Create bidirectional stream
+final stream = ndJsonStream(agentProcess.stdout, agentProcess.stdin);
+
+// Create client connection
+final connection = ClientSideConnection(
+  (agent) => ExampleClient(),
+  stream,
+);
+```
+
+<Note>
+  The `ndJsonStream` function creates a newline-delimited JSON stream for communication over stdin/stdout.
+</Note>
+
+### Initializing the Protocol
+
+Negotiate capabilities with the agent:
+
+```dart
+final initResult = await connection.initialize(
+  InitializeRequest(
+    protocolVersion: 1,
+    clientCapabilities: ClientCapabilities(
+      fs: FileSystemCapability(
+        readTextFile: true,
+        writeTextFile: true,
+      ),
+      terminal: true,
+    ),
+    clientInfo: Implementation(
+      name: 'my-client',
+      version: '1.0.0',
+    ),
+  ),
+);
+
+print('Agent protocol version: ${initResult.protocolVersion}');
+print('Agent can load sessions: ${initResult.agentCapabilities?.loadSession}');
+```
+
+### Creating Sessions
+
+Start a new conversation session:
+
+```dart
+final sessionResult = await connection.newSession(
+  NewSessionRequest(
+    cwd: Directory.current.path,
+    mcpServers: [
+      HttpMcpServer(
+        name: 'docs',
+        url: 'https://api.example.com',
+        headers: const [],
+      ),
+      SseMcpServer(
+        name: 'events',
+        url: 'https://events.example.com',
+        headers: const [],
+      ),
+    ],
+  ),
+);
+
+final sessionId = sessionResult.sessionId;
+```
+
+### Sending Prompts
+
+Send user messages to the agent:
+
+```dart
+final promptResult = await connection.prompt(
+  PromptRequest(
+    sessionId: sessionId,
+    prompt: [
+      TextContentBlock(text: 'Write a hello world program'),
+      ResourceLinkContentBlock(
+        uri: 'file:///project/main.dart',
+        name: 'main.dart',
+      ),
+    ],
+  ),
+);
+
+switch (promptResult.stopReason) {
+  case StopReason.endTurn:
+    print('Agent completed successfully');
+  case StopReason.cancelled:
+    print('Turn was cancelled');
+  case StopReason.maxTokens:
+    print('Reached token limit');
+  default:
+    print('Other stop reason: ${promptResult.stopReason}');
+}
+```
+
+## Handling Session Updates
+
+Process real-time updates from the agent:
+
+```dart
+@override
+Future<void> sessionUpdate(SessionNotification params) async {
+  final update = params.update;
+
+  switch (update) {
+    case AgentMessageChunkSessionUpdate():
+      // Display agent message text
+      if (update.content is TextContentBlock) {
+        final text = (update.content as TextContentBlock).text;
+        stdout.write(text);
+      }
+
+    case ToolCallSessionUpdate():
+      // New tool call started
+      print('\n🔧 ${update.title}');
+      if (update.locations != null) {
+        for (final loc in update.locations!) {
+          print('   📄 ${loc.path}');
+        }
+      }
+
+    case ToolCallUpdateSessionUpdate():
+      // Tool call status changed
+      if (update.status == ToolCallStatus.completed) {
+        print('✅ Tool completed');
+      } else if (update.status == ToolCallStatus.failed) {
+        print('❌ Tool failed');
+      }
+
+    case PlanSessionUpdate():
+      // Agent created/updated execution plan
+      print('\n📋 Plan:');
+      for (final entry in update.entries) {
+        print('   ${entry.status}: ${entry.content}');
+      }
+
+    default:
+      // Handle other update types
+      break;
+  }
+}
+```
+
+<Tip>
+  Use pattern matching (`switch` with types) for clean update handling.
+</Tip>
+
+## Handling Permission Requests
+
+Prompt the user for permission:
+
+```dart
+@override
+Future<RequestPermissionResponse> requestPermission(
+  RequestPermissionRequest params,
+) async {
+  print('Permission needed for: ${params.toolCall.title}');
+  print('Tool: ${params.toolCall.kind}');
+  
+  // Show locations being accessed
+  if (params.toolCall.locations != null) {
+    for (final loc in params.toolCall.locations!) {
+      print('  File: ${loc.path}');
+    }
+  }
+
+  // Display options
+  for (int i = 0; i < params.options.length; i++) {
+    final opt = params.options[i];
+    print('${i + 1}. ${opt.name} (${opt.kind})');
+  }
+
+  // Get user choice
+  final choice = getUserChoice(params.options.length);
+  
+  return RequestPermissionResponse(
+    outcome: SelectedOutcome(
+      optionId: params.options[choice].optionId,
+    ),
+  );
+}
+```
+
+### Permission Option Kinds
+
+```dart
+enum PermissionOptionKind {
+  allowOnce,     // Allow this specific operation
+  allowAlways,   // Allow all similar operations
+  rejectOnce,    // Reject this operation
+  rejectAlways,  // Reject all similar operations
+}
+```
+
+## File System Operations
+
+Implement file access for the agent:
+
+```dart
+@override
+Future<ReadTextFileResponse> readTextFile(ReadTextFileRequest params) async {
+  try {
+    final file = File(params.path);
+    final content = await file.readAsString();
+    
+    // Handle line/limit if specified
+    if (params.line != null || params.limit != null) {
+      final lines = content.split('\n');
+      final start = params.line ?? 0;
+      final end = params.limit != null ? start + params.limit! : lines.length;
+      final selectedLines = lines.sublist(start, end);
+      return ReadTextFileResponse(content: selectedLines.join('\n'));
+    }
+    
+    return ReadTextFileResponse(content: content);
+  } catch (e) {
+    throw RequestError.resourceNotFound(params.path);
+  }
+}
+
+@override
+Future<WriteTextFileResponse> writeTextFile(
+  WriteTextFileRequest params,
+) async {
+  try {
+    final file = File(params.path);
+    await file.writeAsString(params.content);
+    return WriteTextFileResponse();
+  } catch (e) {
+    throw RequestError.internalError('Failed to write file: $e');
+  }
+}
+```
+
+## Terminal Operations
+
+Manage terminal processes:
+
+```dart
+@override
+Future<CreateTerminalResponse> createTerminal(
+  CreateTerminalRequest params,
+) async {
+  final process = await Process.start(
+    params.command,
+    params.args ?? [],
+    workingDirectory: params.cwd,
+    environment: params.env != null
+        ? Map.fromEntries(params.env!.map((e) => MapEntry(e.name, e.value)))
+        : null,
+  );
+  
+  final terminalId = generateTerminalId();
+  storeTerminalProcess(terminalId, process);
+  
+  return CreateTerminalResponse(terminalId: terminalId);
+}
+```
+
+## Cancelling Operations
+
+Cancel an ongoing prompt:
+
+```dart
+// Send cancellation notification
+await connection.cancel(
+  CancelNotification(sessionId: sessionId),
+);
+
+// The prompt will return with StopReason.cancelled
+```
+
+## Extension Methods
+
+Handle custom protocol extensions:
+
+```dart
+@override
+Future<Map<String, dynamic>>? extMethod(
+  String method,
+  Map<String, dynamic> params,
+) async {
+  if (method == '_customFeature') {
+    // Handle custom feature
+    return {'result': 'success'};
+  }
+  
+  throw RequestError.methodNotFound(method);
+}
+```
+
+<Note>
+  Extension methods must start with an underscore (`_`) prefix.
+</Note>
+
+## Next Steps
+
+<CardGroup cols={2}>
+  <Card title="Basic Agent" icon="robot" href="/examples/basic-agent">
+    Learn how to build the agent side
+  </Card>
+  <Card title="Advanced Usage" icon="wand-magic-sparkles" href="/examples/advanced-usage">
+    Explore advanced patterns and features
+  </Card>
+  <Card title="API Reference" icon="code" href="/api/client">
+    Explore the complete Client interface
+  </Card>
+  <Card title="Error Handling" icon="triangle-exclamation" href="/guides/error-handling">
+    Learn about error handling patterns
+  </Card>
+</CardGroup>

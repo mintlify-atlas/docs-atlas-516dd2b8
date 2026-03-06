@@ -1,0 +1,492 @@
+---
+title: Terminal Operations
+description: Execute and manage terminal commands through the ACP protocol
+---
+
+This guide covers how to execute commands, monitor output, and manage terminal lifecycle in both agents and clients.
+
+## Overview
+
+The ACP terminal capability allows agents to:
+- Execute shell commands in the client environment
+- Monitor command output in real-time
+- Wait for command completion
+- Kill running commands
+- Properly clean up resources
+
+## Terminal Request Types
+
+The SDK provides these terminal-related types in `lib/src/schema.dart`:
+
+- `CreateTerminalRequest` - Start a new terminal with a command
+- `TerminalOutputRequest` - Get current output from a terminal
+- `WaitForTerminalExitRequest` - Wait for command completion
+- `KillTerminalCommandRequest` - Terminate a running command
+- `ReleaseTerminalRequest` - Release terminal resources
+
+## Agent Side
+
+Agents use terminals through the client connection to execute commands in the client's environment.
+
+### Creating a Terminal
+
+<Steps>
+
+### Request terminal creation
+
+Agents call `createTerminal` on the client connection:
+
+```dart
+import 'package:acp_dart/acp_dart.dart';
+
+class MyAgent implements Agent {
+  final AgentSideConnection _connection;
+  
+  Future<void> executeCommand(String sessionId) async {
+    final response = await _connection.createTerminal(
+      CreateTerminalRequest(
+        sessionId: sessionId,
+        command: 'npm',
+        args: ['install', '--verbose'],
+        cwd: '/path/to/project',
+        env: [
+          EnvVariable(name: 'NODE_ENV', value: 'production'),
+        ],
+      ),
+    );
+    
+    final terminalId = response.terminalId;
+    print('Created terminal: $terminalId');
+  }
+}
+```
+
+### Monitor terminal output
+
+Get output without waiting for completion:
+
+```dart
+final outputResponse = await _connection.terminalOutput(
+  TerminalOutputRequest(
+    sessionId: sessionId,
+    terminalId: terminalId,
+  ),
+);
+
+print('Current output: ${outputResponse.output}');
+
+if (outputResponse.exitStatus != null) {
+  print('Command exited with code: ${outputResponse.exitStatus!.exitCode}');
+}
+```
+
+### Wait for completion
+
+Block until the command finishes:
+
+```dart
+final exitResponse = await _connection.waitForTerminalExit(
+  WaitForTerminalExitRequest(
+    sessionId: sessionId,
+    terminalId: terminalId,
+  ),
+);
+
+if (exitResponse.exitCode == 0) {
+  print('Command completed successfully');
+} else {
+  print('Command failed with code: ${exitResponse.exitCode}');
+}
+
+if (exitResponse.signal != null) {
+  print('Command terminated by signal: ${exitResponse.signal}');
+}
+```
+
+### Clean up resources
+
+Always release terminals when done:
+
+```dart
+await _connection.releaseTerminal(
+  ReleaseTerminalRequest(
+    sessionId: sessionId,
+    terminalId: terminalId,
+  ),
+);
+```
+
+</Steps>
+
+### Using TerminalHandle
+
+The SDK provides a convenient `TerminalHandle` class that wraps terminal operations:
+
+```dart
+import 'package:acp_dart/acp_dart.dart';
+
+// Create a handle after getting terminal ID
+final handle = TerminalHandle(
+  terminalId,
+  sessionId,
+  _connection._connection,  // Internal connection
+);
+
+// Use the handle for operations
+final output = await handle.currentOutput();
+final exitStatus = await handle.waitForExit();
+await handle.kill();
+await handle.release();
+
+// Or use async disposal pattern
+await handle.dispose();  // Automatically calls release()
+```
+
+### Reporting Terminal Tool Calls
+
+Report terminal operations to the client:
+
+```dart
+// Report terminal creation
+await _connection.sessionUpdate(
+  SessionNotification(
+    sessionId: sessionId,
+    update: ToolCallSessionUpdate(
+      toolCallId: 'terminal_1',
+      title: 'Running npm install',
+      kind: ToolKind.execute,
+      status: ToolCallStatus.inProgress,
+      content: [
+        TerminalToolCallContent(terminalId: terminalId),
+      ],
+      rawInput: {
+        'command': 'npm',
+        'args': ['install', '--verbose'],
+      },
+    ),
+  ),
+);
+
+// Wait for completion
+final exitStatus = await _connection.waitForTerminalExit(
+  WaitForTerminalExitRequest(
+    sessionId: sessionId,
+    terminalId: terminalId,
+  ),
+);
+
+// Get final output
+final output = await _connection.terminalOutput(
+  TerminalOutputRequest(
+    sessionId: sessionId,
+    terminalId: terminalId,
+  ),
+);
+
+// Update tool call with completion
+await _connection.sessionUpdate(
+  SessionNotification(
+    sessionId: sessionId,
+    update: ToolCallUpdateSessionUpdate(
+      toolCallId: 'terminal_1',
+      status: exitStatus.exitCode == 0
+          ? ToolCallStatus.completed
+          : ToolCallStatus.failed,
+      content: [
+        TerminalToolCallContent(terminalId: terminalId),
+      ],
+      rawOutput: {
+        'exitCode': exitStatus.exitCode,
+        'output': output.output,
+      },
+    ),
+  ),
+);
+
+// Clean up
+await _connection.releaseTerminal(
+  ReleaseTerminalRequest(
+    sessionId: sessionId,
+    terminalId: terminalId,
+  ),
+);
+```
+
+### Implementing Command Timeouts
+
+Kill commands that run too long:
+
+```dart
+future command execution with timeout
+try {
+  final exitStatus = await _connection.waitForTerminalExit(
+    WaitForTerminalExitRequest(
+      sessionId: sessionId,
+      terminalId: terminalId,
+    ),
+  ).timeout(
+    Duration(seconds: 30),
+    onTimeout: () async {
+      // Kill the command
+      await _connection.killTerminal(
+        KillTerminalCommandRequest(
+          sessionId: sessionId,
+          terminalId: terminalId,
+        ),
+      );
+      
+      // Get final output
+      final output = await _connection.terminalOutput(
+        TerminalOutputRequest(
+          sessionId: sessionId,
+          terminalId: terminalId,
+        ),
+      );
+      
+      print('Command timed out. Output: ${output.output}');
+      
+      throw TimeoutException('Command exceeded 30 second timeout');
+    },
+  );
+  
+  print('Command completed with exit code: ${exitStatus.exitCode}');
+  
+} finally {
+  // Always release the terminal
+  await _connection.releaseTerminal(
+    ReleaseTerminalRequest(
+      sessionId: sessionId,
+      terminalId: terminalId,
+    ),
+  );
+}
+```
+
+## Client Side
+
+Clients implement terminal operations to execute commands in their environment.
+
+### Implementing Terminal Creation
+
+```dart
+import 'dart:io';
+import 'dart:convert';
+import 'package:acp_dart/acp_dart.dart';
+
+class MyClient implements Client {
+  final Map<String, Process> _terminals = {};
+  final Map<String, StringBuffer> _outputs = {};
+  
+  @override
+  Future<CreateTerminalResponse> createTerminal(
+    CreateTerminalRequest params,
+  ) async {
+    // Generate unique terminal ID
+    final terminalId = _generateTerminalId();
+    
+    // Build environment variables
+    final environment = <String, String>{};
+    if (params.env != null) {
+      for (final envVar in params.env!) {
+        environment[envVar.name] = envVar.value;
+      }
+    }
+    
+    // Start the process
+    final process = await Process.start(
+      params.command,
+      params.args ?? [],
+      workingDirectory: params.cwd,
+      environment: environment.isNotEmpty ? environment : null,
+    );
+    
+    // Store process and capture output
+    _terminals[terminalId] = process;
+    _outputs[terminalId] = StringBuffer();
+    
+    // Capture stdout and stderr
+    process.stdout.transform(utf8.decoder).listen((data) {
+      _outputs[terminalId]!.write(data);
+    });
+    
+    process.stderr.transform(utf8.decoder).listen((data) {
+      _outputs[terminalId]!.write(data);
+    });
+    
+    return CreateTerminalResponse(terminalId: terminalId);
+  }
+  
+  String _generateTerminalId() {
+    return 'term_${DateTime.now().millisecondsSinceEpoch}';
+  }
+}
+```
+
+### Implementing Terminal Output
+
+```dart
+@override
+Future<TerminalOutputResponse> terminalOutput(
+  TerminalOutputRequest params,
+) async {
+  final process = _terminals[params.terminalId];
+  final output = _outputs[params.terminalId];
+  
+  if (process == null || output == null) {
+    throw RequestError.resourceNotFound('Terminal ${params.terminalId}');
+  }
+  
+  // Check if process has exited
+  TerminalExitStatus? exitStatus;
+  try {
+    final exitCode = await process.exitCode.timeout(
+      Duration.zero,
+      onTimeout: () => null,
+    );
+    
+    if (exitCode != null) {
+      exitStatus = TerminalExitStatus(exitCode: exitCode);
+    }
+  } catch (e) {
+    // Process still running
+  }
+  
+  return TerminalOutputResponse(
+    output: output.toString(),
+    exitStatus: exitStatus,
+    truncated: false,
+  );
+}
+```
+
+### Implementing Wait for Exit
+
+```dart
+@override
+Future<WaitForTerminalExitResponse> waitForTerminalExit(
+  WaitForTerminalExitRequest params,
+) async {
+  final process = _terminals[params.terminalId];
+  
+  if (process == null) {
+    throw RequestError.resourceNotFound('Terminal ${params.terminalId}');
+  }
+  
+  // Wait for process to complete
+  final exitCode = await process.exitCode;
+  
+  return WaitForTerminalExitResponse(
+    exitCode: exitCode,
+    signal: null,
+  );
+}
+```
+
+### Implementing Kill Terminal
+
+```dart
+@override
+Future<KillTerminalCommandResponse> killTerminal(
+  KillTerminalCommandRequest params,
+) async {
+  final process = _terminals[params.terminalId];
+  
+  if (process == null) {
+    throw RequestError.resourceNotFound('Terminal ${params.terminalId}');
+  }
+  
+  // Kill the process
+  process.kill();
+  
+  return KillTerminalCommandResponse();
+}
+```
+
+### Implementing Release Terminal
+
+```dart
+@override
+Future<ReleaseTerminalResponse> releaseTerminal(
+  ReleaseTerminalRequest params,
+) async {
+  final process = _terminals.remove(params.terminalId);
+  _outputs.remove(params.terminalId);
+  
+  if (process != null) {
+    // Kill if still running
+    try {
+      process.kill();
+    } catch (e) {
+      // Process already exited
+    }
+  }
+  
+  return ReleaseTerminalResponse();
+}
+```
+
+## Best Practices
+
+<Warning>
+Always release terminals when done to prevent resource leaks.
+</Warning>
+
+### Do:
+
+✅ Always release terminals in a `finally` block:
+
+```dart
+try {
+  final terminal = await createTerminal(...);
+  // Use terminal
+} finally {
+  await releaseTerminal(...);
+}
+```
+
+✅ Set appropriate timeouts for long-running commands:
+
+```dart
+await waitForExit(...).timeout(Duration(minutes: 5));
+```
+
+✅ Capture both stdout and stderr:
+
+```dart
+process.stdout.listen((data) => buffer.write(data));
+process.stderr.listen((data) => buffer.write(data));
+```
+
+### Don't:
+
+❌ Leave terminals unreleased after errors:
+
+```dart
+// Bad: terminal leaks if error occurs
+final terminal = await createTerminal(...);
+if (someCondition) throw Exception('Error');
+await releaseTerminal(...);
+```
+
+❌ Execute dangerous commands without permission
+
+❌ Block indefinitely waiting for command completion
+
+## Complete Example
+
+See the complete client example:
+
+```bash
+dart run example/client.dart
+```
+
+## Next Steps
+
+<CardGroup cols={2}>
+  <Card title="File System Operations" icon="folder" href="/guides/file-system-operations">
+    Learn about file operations
+  </Card>
+  <Card title="Error Handling" icon="triangle-exclamation" href="/guides/error-handling">
+    Handle terminal errors gracefully
+  </Card>
+</CardGroup>

@@ -1,0 +1,278 @@
+---
+title: Building an Agent
+description: Step-by-step guide to implementing an ACP agent in Dart
+---
+
+This guide walks you through building an ACP agent that can handle client requests, manage sessions, and process prompts.
+
+## Overview
+
+An agent is the AI-powered side of the ACP connection that:
+- Receives prompts from clients
+- Processes requests using language models
+- Executes tool calls
+- Sends session updates back to clients
+
+## Prerequisites
+
+Add the ACP Dart SDK to your `pubspec.yaml`:
+
+```yaml
+dependencies:
+  acp_dart: ^1.0.0
+```
+
+## Implementation Steps
+
+<Steps>
+
+### Create your Agent class
+
+Implement the `Agent` abstract class to handle all protocol methods:
+
+```dart
+import 'package:acp_dart/acp_dart.dart';
+
+class MyAgent implements Agent {
+  final AgentSideConnection _connection;
+  final Map<String, AgentSession> _sessions = {};
+
+  MyAgent(this._connection);
+
+  @override
+  Future<InitializeResponse> initialize(InitializeRequest params) async {
+    return InitializeResponse(
+      protocolVersion: 1,
+      agentCapabilities: AgentCapabilities(
+        loadSession: false,
+        sessionCapabilities: SessionCapabilities(),
+      ),
+      authMethods: const [],
+    );
+  }
+
+  @override
+  Future<NewSessionResponse> newSession(NewSessionRequest params) async {
+    final sessionId = _generateSessionId();
+    _sessions[sessionId] = AgentSession();
+
+    return NewSessionResponse(
+      sessionId: sessionId,
+      modes: SessionModeState(
+        availableModes: [
+          SessionMode(id: 'default', name: 'Default'),
+          SessionMode(id: 'code', name: 'Code Mode'),
+        ],
+        currentModeId: 'default',
+      ),
+    );
+  }
+
+  // Additional required methods...
+}
+```
+
+### Handle prompt requests
+
+Implement the `prompt` method to process user input and generate responses:
+
+```dart
+@override
+Future<PromptResponse> prompt(PromptRequest params) async {
+  final session = _sessions[params.sessionId];
+  
+  if (session == null) {
+    throw RequestError.resourceNotFound(params.sessionId);
+  }
+
+  // Send initial response chunk
+  await _connection.sessionUpdate(
+    SessionNotification(
+      sessionId: params.sessionId,
+      update: AgentMessageChunkSessionUpdate(
+        content: TextContentBlock(
+          text: 'Processing your request...',
+        ),
+      ),
+    ),
+  );
+
+  // Process the prompt with your AI model
+  // Send more updates as needed
+
+  return PromptResponse(stopReason: StopReason.endTurn);
+}
+```
+
+### Send tool call updates
+
+Notify clients about tool execution progress:
+
+```dart
+// Report a new tool call
+await _connection.sessionUpdate(
+  SessionNotification(
+    sessionId: sessionId,
+    update: ToolCallSessionUpdate(
+      toolCallId: 'call_1',
+      title: 'Reading project files',
+      kind: ToolKind.read,
+      status: ToolCallStatus.pending,
+      locations: [
+        ToolCallLocation(path: '/project/README.md'),
+      ],
+      rawInput: {'path': '/project/README.md'},
+    ),
+  ),
+);
+
+// Update when complete
+await _connection.sessionUpdate(
+  SessionNotification(
+    sessionId: sessionId,
+    update: ToolCallUpdateSessionUpdate(
+      toolCallId: 'call_1',
+      status: ToolCallStatus.completed,
+      content: [
+        ContentToolCallContent(
+          content: TextContentBlock(
+            text: '# My Project\nReadme contents...',
+          ),
+        ),
+      ],
+      rawOutput: {'content': '# My Project\nReadme contents...'},
+    ),
+  ),
+);
+```
+
+### Request permissions for sensitive operations
+
+Use `requestPermission` for operations that need user approval:
+
+```dart
+final permissionResponse = await _connection.requestPermission(
+  RequestPermissionRequest(
+    sessionId: sessionId,
+    options: [
+      PermissionOption(
+        optionId: 'allow',
+        name: 'Allow this change',
+        kind: PermissionOptionKind.allowOnce,
+      ),
+      PermissionOption(
+        optionId: 'reject',
+        name: 'Skip this change',
+        kind: PermissionOptionKind.rejectOnce,
+      ),
+    ],
+    toolCall: ToolCallUpdate(
+      toolCallId: 'call_2',
+      title: 'Modifying configuration file',
+      kind: ToolKind.edit,
+      status: ToolCallStatus.pending,
+      locations: [
+        ToolCallLocation(path: '/project/config.json'),
+      ],
+      rawInput: {
+        'path': '/project/config.json',
+        'content': '{"database": {"host": "new-host"}}',
+      },
+    ),
+  ),
+);
+
+// Handle the response
+final outcome = permissionResponse.outcome;
+switch (outcome) {
+  case SelectedOutcome(optionId: final optionId) when optionId == 'allow':
+    // Execute the operation
+    break;
+  case SelectedOutcome(optionId: final optionId) when optionId == 'reject':
+    // Skip the operation
+    break;
+  case CancelledOutcome():
+    // Handle cancellation
+    break;
+}
+```
+
+### Handle cancellation requests
+
+Implement graceful cancellation for long-running operations:
+
+```dart
+@override
+Future<void> cancel(CancelNotification params) async {
+  final session = _sessions[params.sessionId];
+  
+  if (session != null && 
+      session.pendingPrompt != null && 
+      !session.pendingPrompt!.isCompleted) {
+    session.pendingPrompt!.complete();
+  }
+}
+```
+
+### Set up the connection
+
+Create the agent connection and start listening:
+
+```dart
+import 'dart:io';
+import 'package:acp_dart/acp_dart.dart';
+
+void main() {
+  // Create an NDJSON stream using stdin/stdout
+  final stream = ndJsonStream(stdin, stdout);
+
+  // Create the agent-side connection
+  final connection = AgentSideConnection(
+    (conn) => MyAgent(conn),
+    stream,
+  );
+
+  // The connection automatically handles incoming messages
+}
+```
+
+</Steps>
+
+## Complete Example
+
+See the full example in the repository:
+
+```bash
+dart run example/agent.dart
+```
+
+## Error Handling
+
+<Note>
+Always throw `RequestError` instances for protocol-level errors. The SDK automatically converts them to proper JSON-RPC error responses.
+</Note>
+
+```dart
+// Resource not found
+throw RequestError.resourceNotFound('/path/to/file.txt');
+
+// Method not implemented
+throw RequestError.methodNotFound('session/load');
+
+// Invalid parameters
+throw RequestError.invalidParams({'reason': 'Session ID required'});
+
+// Authentication required
+throw RequestError.authRequired();
+```
+
+## Next Steps
+
+<CardGroup cols={2}>
+  <Card title="Error Handling" icon="triangle-exclamation" href="/guides/error-handling">
+    Learn about error handling patterns
+  </Card>
+  <Card title="Terminal Operations" icon="terminal" href="/guides/terminal-operations">
+    Execute commands in terminals
+  </Card>
+</CardGroup>

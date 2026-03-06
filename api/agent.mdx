@@ -1,0 +1,398 @@
+---
+title: 'Agent'
+description: 'Abstract base class defining the Agent interface for ACP connections'
+---
+
+## Overview
+
+The `Agent` abstract class defines the core interface that agents must implement to handle requests from clients in the ACP protocol. Agents are responsible for processing user prompts, managing sessions, handling authentication, and coordinating with AI models and tools.
+
+## Class Definition
+
+```dart
+abstract class Agent
+```
+
+Agents implement this interface to handle:
+- Protocol initialization and capability negotiation
+- Session lifecycle management (creation, loading, forking)
+- User prompt processing and AI model coordination
+- Authentication flows
+- Mode and configuration management
+
+## Methods
+
+### initialize
+
+Establishes the connection with a client and negotiates protocol capabilities.
+
+```dart
+Future<InitializeResponse> initialize(InitializeRequest params)
+```
+
+This method is called once at the beginning of the connection to:
+- Negotiate the protocol version to use
+- Exchange capability information between client and agent
+- Determine available authentication methods
+
+The agent should respond with its supported protocol version and capabilities.
+
+<ParamField path="params" type="InitializeRequest" required>
+  The initialization request containing protocol version and client capabilities
+</ParamField>
+
+<ResponseField name="InitializeResponse" type="InitializeResponse">
+  Contains the agent's protocol version, capabilities, and available authentication methods
+</ResponseField>
+
+### newSession
+
+Creates a new conversation session with the agent.
+
+```dart
+Future<NewSessionResponse> newSession(NewSessionRequest params)
+```
+
+Sessions represent independent conversation contexts with their own history and state. The agent should:
+- Create a new session context
+- Connect to any specified MCP servers
+- Return a unique session ID for future requests
+
+May return an `auth_required` error if the agent requires authentication.
+
+<ParamField path="params" type="NewSessionRequest" required>
+  Request parameters for creating a new session
+</ParamField>
+
+<ResponseField name="NewSessionResponse" type="NewSessionResponse">
+  Contains the unique session ID and session configuration
+</ResponseField>
+
+### loadSession
+
+Loads an existing session to resume a previous conversation.
+
+```dart
+Future<LoadSessionResponse>? loadSession(LoadSessionRequest params)
+```
+
+This method is only available if the agent advertises the `loadSession` capability. The agent should:
+- Restore the session context and conversation history
+- Connect to the specified MCP servers
+- Stream the entire conversation history back to the client via notifications
+
+<ParamField path="params" type="LoadSessionRequest" required>
+  Request parameters containing the session ID to load
+</ParamField>
+
+<ResponseField name="LoadSessionResponse" type="LoadSessionResponse" optional>
+  Returns `null` if not supported, otherwise contains loaded session information
+</ResponseField>
+
+### prompt
+
+Processes a user prompt within a session.
+
+```dart
+Future<PromptResponse> prompt(PromptRequest params)
+```
+
+This method handles the whole lifecycle of a prompt:
+- Receives user messages with optional context (files, images, etc.)
+- Processes the prompt using language models
+- Reports language model content and tool calls to the clients
+- Requests permission to run tools
+- Executes any requested tool calls
+- Returns when the turn is complete with a stop reason
+
+<ParamField path="params" type="PromptRequest" required>
+  The prompt request containing session ID, messages, and context
+</ParamField>
+
+<ResponseField name="PromptResponse" type="PromptResponse">
+  Contains the final stop reason and any result data
+</ResponseField>
+
+### setSessionMode
+
+Sets the operational mode for a session.
+
+```dart
+Future<SetSessionModeResponse?>? setSessionMode(SetSessionModeRequest params)
+```
+
+Allows switching between different agent modes (e.g., "ask", "architect", "code") that affect system prompts, tool availability, and permission behaviors.
+
+The mode must be one of the modes advertised in `availableModes` during session creation or loading. Agents may also change modes autonomously and notify the client via `current_mode_update` notifications.
+
+This method can be called at any time during a session, whether the Agent is idle or actively generating a turn.
+
+<ParamField path="params" type="SetSessionModeRequest" required>
+  Request containing the session ID and desired mode
+</ParamField>
+
+<ResponseField name="SetSessionModeResponse" type="SetSessionModeResponse" optional>
+  Returns `null` if not supported, otherwise confirms the mode change
+</ResponseField>
+
+### setSessionConfigOption
+
+Sets the current value for a session configuration option.
+
+```dart
+Future<SetSessionConfigOptionResponse>? setSessionConfigOption(
+  SetSessionConfigOptionRequest params,
+)
+```
+
+This method is available when the agent exposes session config options. The response returns the complete, updated configuration state.
+
+<ParamField path="params" type="SetSessionConfigOptionRequest" required>
+  Request containing the session ID, option key, and new value
+</ParamField>
+
+<ResponseField name="SetSessionConfigOptionResponse" type="SetSessionConfigOptionResponse" optional>
+  Returns `null` if not supported, otherwise contains the updated configuration
+</ResponseField>
+
+### authenticate
+
+Authenticates the client using the specified authentication method.
+
+```dart
+Future<AuthenticateResponse?>? authenticate(AuthenticateRequest params)
+```
+
+Called when the agent requires authentication before allowing session creation. The client provides the authentication method ID that was advertised during initialization.
+
+After successful authentication, the client can proceed to create sessions with `newSession` without receiving an `auth_required` error.
+
+<ParamField path="params" type="AuthenticateRequest" required>
+  Request containing the authentication method and credentials
+</ParamField>
+
+<ResponseField name="AuthenticateResponse" type="AuthenticateResponse" optional>
+  Returns `null` if not supported, otherwise confirms authentication success
+</ResponseField>
+
+### cancel
+
+Cancels ongoing operations for a session.
+
+```dart
+Future<void> cancel(CancelNotification params)
+```
+
+This is a notification sent by the client to cancel an ongoing prompt turn.
+
+Upon receiving this notification, the Agent SHOULD:
+- Stop all language model requests as soon as possible
+- Abort all tool call invocations in progress
+- Send any pending `session/update` notifications
+- Respond to the original `session/prompt` request with `StopReason::Cancelled`
+
+<ParamField path="params" type="CancelNotification" required>
+  Notification containing the session ID to cancel
+</ParamField>
+
+### Unstable Methods
+
+The following methods are not yet part of the official ACP specification and may be changed or removed:
+
+#### unstableListSessions
+
+Lists existing sessions from the agent.
+
+```dart
+Future<ListSessionsResponse>? unstableListSessions(
+  ListSessionsRequest params,
+)
+```
+
+<Expandable title="Method Details">
+  <ParamField path="params" type="ListSessionsRequest" required>
+    Request parameters for listing sessions
+  </ParamField>
+  
+  <ResponseField name="ListSessionsResponse" type="ListSessionsResponse" optional>
+    Returns `null` by default, or a list of available sessions
+  </ResponseField>
+</Expandable>
+
+#### unstableForkSession
+
+Forks an existing session to create a new independent session.
+
+```dart
+Future<ForkSessionResponse>? unstableForkSession(ForkSessionRequest params)
+```
+
+<Expandable title="Method Details">
+  <ParamField path="params" type="ForkSessionRequest" required>
+    Request containing the source session ID and fork parameters
+  </ParamField>
+  
+  <ResponseField name="ForkSessionResponse" type="ForkSessionResponse" optional>
+    Returns `null` by default, or the new forked session information
+  </ResponseField>
+</Expandable>
+
+#### unstableResumeSession
+
+Resumes an existing session without replaying previous messages.
+
+```dart
+Future<ResumeSessionResponse>? unstableResumeSession(
+  ResumeSessionRequest params,
+)
+```
+
+<Expandable title="Method Details">
+  <ParamField path="params" type="ResumeSessionRequest" required>
+    Request containing the session ID to resume
+  </ParamField>
+  
+  <ResponseField name="ResumeSessionResponse" type="ResumeSessionResponse" optional>
+    Returns `null` by default, or the resumed session information
+  </ResponseField>
+</Expandable>
+
+#### setSessionModel
+
+Selects the model for a given session.
+
+```dart
+Future<SetSessionModelResponse?>? setSessionModel(
+  SetSessionModelRequest params,
+)
+```
+
+<Expandable title="Method Details">
+  <ParamField path="params" type="SetSessionModelRequest" required>
+    Request containing the session ID and model identifier
+  </ParamField>
+  
+  <ResponseField name="SetSessionModelResponse" type="SetSessionModelResponse" optional>
+    Returns `null` if not supported, otherwise confirms the model selection
+  </ResponseField>
+</Expandable>
+
+### Extension Methods
+
+#### extMethod
+
+Allows the Client to send an arbitrary request that is not part of the ACP spec.
+
+```dart
+Future<Map<String, dynamic>>? extMethod(
+  String method,
+  Map<String, dynamic> params,
+)
+```
+
+The method name is sent exactly as provided and is not rewritten. ACP reserves extension methods under the `_` prefix, so callers should include the leading underscore explicitly when needed.
+
+<ParamField path="method" type="String" required>
+  The extension method name (should start with `_` for ACP-reserved extensions)
+</ParamField>
+
+<ParamField path="params" type="Map<String, dynamic>" required>
+  Arbitrary parameters for the extension method
+</ParamField>
+
+<ResponseField name="result" type="Map<String, dynamic>" optional>
+  Returns `null` if not supported, otherwise the extension method response
+</ResponseField>
+
+#### extNotification
+
+Allows the Client to send an arbitrary notification that is not part of the ACP spec.
+
+```dart
+Future<void>? extNotification(String method, Map<String, dynamic> params)
+```
+
+<ParamField path="method" type="String" required>
+  The extension notification name
+</ParamField>
+
+<ParamField path="params" type="Map<String, dynamic>" required>
+  Arbitrary parameters for the extension notification
+</ParamField>
+
+## Usage Example
+
+```dart
+import 'package:acp_dart/acp_dart.dart';
+
+class MyAgent implements Agent {
+  @override
+  Future<InitializeResponse> initialize(InitializeRequest params) async {
+    return InitializeResponse(
+      protocolVersion: '1.0',
+      capabilities: AgentCapabilities(
+        loadSession: true,
+        sessionModes: ['ask', 'code', 'architect'],
+      ),
+    );
+  }
+
+  @override
+  Future<NewSessionResponse> newSession(NewSessionRequest params) async {
+    // Create a new session with a unique ID
+    final sessionId = generateUniqueId();
+    
+    return NewSessionResponse(
+      sessionId: sessionId,
+      availableModes: ['ask', 'code', 'architect'],
+      currentMode: 'ask',
+    );
+  }
+
+  @override
+  Future<PromptResponse> prompt(PromptRequest params) async {
+    // Process the user's prompt
+    final response = await processWithAI(params.messages);
+    
+    return PromptResponse(
+      stopReason: StopReason.endTurn,
+    );
+  }
+
+  @override
+  Future<void> cancel(CancelNotification params) async {
+    // Cancel any ongoing operations for the session
+    await cancelSession(params.sessionId);
+  }
+
+  // Implement other required methods...
+  @override
+  Future<LoadSessionResponse>? loadSession(LoadSessionRequest params) => null;
+  
+  @override
+  Future<AuthenticateResponse?>? authenticate(AuthenticateRequest params) => null;
+  
+  @override
+  Future<SetSessionModeResponse?>? setSessionMode(SetSessionModeRequest params) => null;
+  
+  @override
+  Future<SetSessionConfigOptionResponse>? setSessionConfigOption(
+    SetSessionConfigOptionRequest params,
+  ) => null;
+  
+  @override
+  Future<Map<String, dynamic>>? extMethod(
+    String method,
+    Map<String, dynamic> params,
+  ) => null;
+  
+  @override
+  Future<void>? extNotification(String method, Map<String, dynamic> params) => null;
+}
+```
+
+## See Also
+
+- [Client](/api/client) - The client interface that agents communicate with
+- [AgentSideConnection](/api/agent-side-connection) - Implementation of agent-side connections
+- [Connection](/api/connection) - Base connection class for JSON-RPC communication

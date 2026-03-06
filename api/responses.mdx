@@ -1,0 +1,513 @@
+---
+title: "Responses"
+description: "Response types sent from agents to clients"
+---
+
+## Overview
+
+Response types represent messages sent from agents to clients in reply to requests. Each response corresponds to a specific request type.
+
+## Initialize
+
+### InitializeResponse
+
+Response to an initialization request.
+
+<ResponseField name="protocolVersion" type="int" required>
+  The protocol version the agent will use
+</ResponseField>
+
+<ResponseField name="agentInfo" type="Implementation">
+  Information about the agent implementation
+  
+  <Expandable title="Implementation fields">
+    <ResponseField name="name" type="string" required>
+      The name of the implementation
+    </ResponseField>
+    
+    <ResponseField name="version" type="string" required>
+      The version of the implementation
+    </ResponseField>
+    
+    <ResponseField name="title" type="string">
+      A human-readable title for the implementation
+    </ResponseField>
+  </Expandable>
+</ResponseField>
+
+<ResponseField name="agentCapabilities" type="AgentCapabilities">
+  Capabilities advertised by the agent
+  
+  <Expandable title="AgentCapabilities fields">
+    <ResponseField name="loadSession" type="bool" default="false">
+      Whether the agent supports loading existing sessions
+    </ResponseField>
+    
+    <ResponseField name="sessionCapabilities" type="SessionCapabilities">
+      Session-related capabilities
+      
+      <Expandable title="SessionCapabilities fields">
+        <ResponseField name="fork" type="SessionForkCapabilities">
+          Whether session forking is supported
+        </ResponseField>
+        
+        <ResponseField name="list" type="SessionListCapabilities">
+          Whether listing sessions is supported
+        </ResponseField>
+        
+        <ResponseField name="resume" type="SessionResumeCapabilities">
+          Whether resuming sessions is supported
+        </ResponseField>
+      </Expandable>
+    </ResponseField>
+    
+    <ResponseField name="mcpCapabilities" type="McpCapabilities">
+      MCP server capabilities
+      
+      <Expandable title="McpCapabilities fields">
+        <ResponseField name="http" type="bool" default="false">
+          Whether HTTP MCP servers are supported
+        </ResponseField>
+        
+        <ResponseField name="sse" type="bool" default="false">
+          Whether SSE MCP servers are supported
+        </ResponseField>
+      </Expandable>
+    </ResponseField>
+    
+    <ResponseField name="promptCapabilities" type="PromptCapabilities">
+      Prompt-related capabilities
+      
+      <Expandable title="PromptCapabilities fields">
+        <ResponseField name="audio" type="bool" default="false">
+          Whether audio content is supported in prompts
+        </ResponseField>
+        
+        <ResponseField name="image" type="bool" default="false">
+          Whether image content is supported in prompts
+        </ResponseField>
+        
+        <ResponseField name="embeddedContext" type="bool" default="false">
+          Whether embedded context is supported
+        </ResponseField>
+      </Expandable>
+    </ResponseField>
+  </Expandable>
+</ResponseField>
+
+<ResponseField name="authMethods" type="List<AuthMethod>" default="[]">
+  Available authentication methods
+  
+  <Expandable title="AuthMethod fields">
+    <ResponseField name="id" type="String" required>
+      Unique identifier for the auth method
+    </ResponseField>
+    
+    <ResponseField name="name" type="String" required>
+      Display name for the auth method
+    </ResponseField>
+    
+    <ResponseField name="description" type="String">
+      Description of the auth method
+    </ResponseField>
+  </Expandable>
+</ResponseField>
+
+<ResponseField name="_meta" type="Map<String, dynamic>">
+  Optional metadata
+</ResponseField>
+
+## Authentication
+
+### AuthenticateResponse
+
+Response to an authentication request.
+
+<ResponseField name="_meta" type="Map<String, dynamic>">
+  Optional metadata
+</ResponseField>
+
+## Session Management
+
+### NewSessionResponse
+
+Response to a new session request.
+
+<ResponseField name="sessionId" type="String" required>
+  The unique identifier for the created session
+</ResponseField>
+
+<ResponseField name="modes" type="SessionModeState">
+  Available modes and current mode for the session
+  
+  <Expandable title="SessionModeState fields">
+    <ResponseField name="currentModeId" type="String" required>
+      The ID of the currently active mode
+    </ResponseField>
+    
+    <ResponseField name="availableModes" type="List<SessionMode>" required>
+      List of available modes
+      
+      <Expandable title="SessionMode fields">
+        <ResponseField name="id" type="String" required>
+          Unique identifier for the mode
+        </ResponseField>
+        
+        <ResponseField name="name" type="String" required>
+          Display name for the mode
+        </ResponseField>
+        
+        <ResponseField name="description" type="String">
+          Description of the mode
+        </ResponseField>
+      </Expandable>
+    </ResponseField>
+  </Expandable>
+</ResponseField>
+
+<ResponseField name="models" type="SessionModelState">
+  Available models and current model for the session
+  
+  <Expandable title="SessionModelState fields">
+    <ResponseField name="currentModelId" type="String" required>
+      The ID of the currently active model
+    </ResponseField>
+    
+    <ResponseField name="availableModels" type="List<ModelInfo>" required>
+      List of available models
+      
+      <Expandable title="ModelInfo fields">
+        <ResponseField name="modelId" type="String" required>
+          Unique identifier for the model
+        </ResponseField>
+        
+        <ResponseField name="name" type="String" required>
+          Display name for the model
+        </ResponseField>
+        
+        <ResponseField name="description" type="String">
+          Description of the model
+        </ResponseField>
+      </Expandable>
+    </ResponseField>
+  </Expandable>
+</ResponseField>
+
+<ResponseField name="configOptions" type="List<SessionConfigOption>">
+  Available configuration options for the session
+</ResponseField>
+
+<ResponseField name="_meta" type="Map<String, dynamic>">
+  Optional metadata
+</ResponseField>
+
+### LoadSessionResponse
+
+Response to a load session request.
+
+<ResponseField name="modes" type="SessionModeState">
+  Available modes and current mode for the session
+</ResponseField>
+
+<ResponseField name="models" type="SessionModelState">
+  Available models and current model for the session
+</ResponseField>
+
+<ResponseField name="configOptions" type="List<SessionConfigOption>">
+  Available configuration options for the session
+</ResponseField>
+
+<ResponseField name="_meta" type="Map<String, dynamic>">
+  Optional metadata
+</ResponseField>
+
+### ListSessionsResponse
+
+<Warning>**UNSTABLE:** This capability is not part of the spec yet, and may be removed or changed at any point.</Warning>
+
+Response containing a list of sessions.
+
+<ResponseField name="sessions" type="List<SessionInfo>" required>
+  List of session information
+  
+  <Expandable title="SessionInfo fields">
+    <ResponseField name="sessionId" type="SessionId" required>
+      The unique identifier for the session
+    </ResponseField>
+    
+    <ResponseField name="cwd" type="String" required>
+      The current working directory for the session
+    </ResponseField>
+    
+    <ResponseField name="title" type="String">
+      The title of the session
+    </ResponseField>
+    
+    <ResponseField name="updatedAt" type="String">
+      When the session was last updated (ISO 8601 timestamp)
+    </ResponseField>
+  </Expandable>
+</ResponseField>
+
+<ResponseField name="nextCursor" type="String">
+  Pagination cursor for fetching the next page
+</ResponseField>
+
+<ResponseField name="_meta" type="Map<String, dynamic>">
+  Optional metadata
+</ResponseField>
+
+### ForkSessionResponse
+
+<Warning>**UNSTABLE:** This capability is not part of the spec yet, and may be removed or changed at any point.</Warning>
+
+Response to a fork session request.
+
+<ResponseField name="sessionId" type="SessionId" required>
+  The unique identifier for the forked session
+</ResponseField>
+
+<ResponseField name="modes" type="SessionModeState">
+  Available modes and current mode
+</ResponseField>
+
+<ResponseField name="models" type="SessionModelState">
+  Available models and current model
+</ResponseField>
+
+<ResponseField name="configOptions" type="List<SessionConfigOption>">
+  Available configuration options
+</ResponseField>
+
+<ResponseField name="_meta" type="Map<String, dynamic>">
+  Optional metadata
+</ResponseField>
+
+### ResumeSessionResponse
+
+<Warning>**UNSTABLE:** This capability is not part of the spec yet, and may be removed or changed at any point.</Warning>
+
+Response to a resume session request.
+
+<ResponseField name="modes" type="SessionModeState">
+  Available modes and current mode
+</ResponseField>
+
+<ResponseField name="models" type="SessionModelState">
+  Available models and current model
+</ResponseField>
+
+<ResponseField name="configOptions" type="List<SessionConfigOption>">
+  Available configuration options
+</ResponseField>
+
+<ResponseField name="_meta" type="Map<String, dynamic>">
+  Optional metadata
+</ResponseField>
+
+### SetSessionModeResponse
+
+Response to a set session mode request.
+
+<ResponseField name="_meta" type="Map<String, dynamic>">
+  Optional metadata
+</ResponseField>
+
+### SetSessionConfigOptionResponse
+
+Response to a set session config option request.
+
+<ResponseField name="configOptions" type="List<SessionConfigOption>" required>
+  The updated configuration options
+</ResponseField>
+
+<ResponseField name="_meta" type="Map<String, dynamic>">
+  Optional metadata
+</ResponseField>
+
+### SetSessionModelResponse
+
+<Warning>**UNSTABLE:** This capability is not part of the spec yet, and may be removed or changed at any point.</Warning>
+
+Response to a set session model request.
+
+<ResponseField name="_meta" type="Map<String, dynamic>">
+  Optional metadata
+</ResponseField>
+
+## Prompt
+
+### PromptResponse
+
+Response to a prompt request. See [Stop Reasons](https://agentclientprotocol.com/protocol/prompt-turn#stop-reasons).
+
+<ResponseField name="stopReason" type="StopReason" required>
+  Indicates why the agent stopped processing the turn:
+  - `end_turn` - The turn ended successfully
+  - `max_tokens` - Reached the maximum number of tokens
+  - `max_turn_requests` - Reached the maximum number of allowed agent requests
+  - `refusal` - The agent refused to continue
+  - `cancelled` - The turn was cancelled via `session/cancel`
+</ResponseField>
+
+<ResponseField name="usage" type="Usage">
+  Token usage information for this prompt
+  
+  <Expandable title="Usage fields">
+    <ResponseField name="inputTokens" type="int" required>
+      Number of input tokens consumed
+    </ResponseField>
+    
+    <ResponseField name="outputTokens" type="int" required>
+      Number of output tokens generated
+    </ResponseField>
+    
+    <ResponseField name="totalTokens" type="int" required>
+      Total tokens (input + output)
+    </ResponseField>
+    
+    <ResponseField name="cachedReadTokens" type="int">
+      Number of cached tokens read
+    </ResponseField>
+    
+    <ResponseField name="cachedWriteTokens" type="int">
+      Number of tokens written to cache
+    </ResponseField>
+    
+    <ResponseField name="thoughtTokens" type="int">
+      Number of tokens used for internal reasoning
+    </ResponseField>
+  </Expandable>
+</ResponseField>
+
+<ResponseField name="_meta" type="Map<String, dynamic>">
+  Optional metadata
+</ResponseField>
+
+## File System
+
+### WriteTextFileResponse
+
+Response to a write text file request.
+
+<ResponseField name="_meta" type="Map<String, dynamic>">
+  Optional metadata
+</ResponseField>
+
+### ReadTextFileResponse
+
+Response to a read text file request.
+
+<ResponseField name="content" type="String" required>
+  The text content read from the file
+</ResponseField>
+
+<ResponseField name="_meta" type="Map<String, dynamic>">
+  Optional metadata
+</ResponseField>
+
+## Permissions
+
+### RequestPermissionResponse
+
+Response to a permission request.
+
+<ResponseField name="outcome" type="RequestPermissionOutcome" required>
+  The user's decision, either `CancelledOutcome` or `SelectedOutcome`
+  
+  <Expandable title="CancelledOutcome">
+    <ResponseField name="outcome" type="String" default="cancelled">
+      Always "cancelled"
+    </ResponseField>
+  </Expandable>
+  
+  <Expandable title="SelectedOutcome">
+    <ResponseField name="outcome" type="String" default="selected">
+      Always "selected"
+    </ResponseField>
+    
+    <ResponseField name="optionId" type="String" required>
+      The ID of the selected permission option
+    </ResponseField>
+  </Expandable>
+</ResponseField>
+
+<ResponseField name="_meta" type="Map<String, dynamic>">
+  Optional metadata
+</ResponseField>
+
+## Terminal
+
+### CreateTerminalResponse
+
+Response to a create terminal request.
+
+<ResponseField name="terminalId" type="String" required>
+  The unique identifier for the created terminal
+</ResponseField>
+
+<ResponseField name="_meta" type="Map<String, dynamic>">
+  Optional metadata
+</ResponseField>
+
+### TerminalOutputResponse
+
+Response containing terminal output.
+
+<ResponseField name="output" type="String" required>
+  The terminal output (stdout and stderr combined)
+</ResponseField>
+
+<ResponseField name="truncated" type="bool" required>
+  Whether the output was truncated due to size limits
+</ResponseField>
+
+<ResponseField name="exitStatus" type="TerminalExitStatus">
+  The exit status if the command has completed
+  
+  <Expandable title="TerminalExitStatus fields">
+    <ResponseField name="exitCode" type="int">
+      The exit code of the command
+    </ResponseField>
+    
+    <ResponseField name="signal" type="String">
+      The signal that terminated the command (if applicable)
+    </ResponseField>
+  </Expandable>
+</ResponseField>
+
+<ResponseField name="_meta" type="Map<String, dynamic>">
+  Optional metadata
+</ResponseField>
+
+### ReleaseTerminalResponse
+
+Response to a release terminal request.
+
+<ResponseField name="_meta" type="Map<String, dynamic>">
+  Optional metadata
+</ResponseField>
+
+### WaitForTerminalExitResponse
+
+Response containing terminal exit information.
+
+<ResponseField name="exitCode" type="int">
+  The exit code of the command
+</ResponseField>
+
+<ResponseField name="signal" type="String">
+  The signal that terminated the command (if applicable)
+</ResponseField>
+
+<ResponseField name="_meta" type="Map<String, dynamic>">
+  Optional metadata
+</ResponseField>
+
+### KillTerminalCommandResponse
+
+Response to a kill terminal command request.
+
+<ResponseField name="_meta" type="Map<String, dynamic>">
+  Optional metadata
+</ResponseField>

@@ -1,0 +1,367 @@
+---
+title: Unstable Protocol Features
+description: Experimental ACP features that may change
+icon: flask
+---
+
+<Warning>
+**Important:** Unstable features are not part of the official ACP specification yet. They may be removed, renamed, or have their behavior changed at any point without notice.
+
+Use these features only for experimentation and be prepared to update your code when the protocol evolves.
+</Warning>
+
+## Unstable Session Methods
+
+The Dart SDK implements several experimental session management methods.
+
+### session/list
+
+Lists existing sessions from the agent with optional filtering and pagination.
+
+```dart
+class MyAgent implements Agent {
+  @override
+  Future<ListSessionsResponse>? unstableListSessions(
+    ListSessionsRequest params,
+  ) async {
+    final sessions = await getSessionsForCwd(params.cwd);
+    
+    return ListSessionsResponse(
+      sessions: sessions.map((s) => SessionInfo(
+        sessionId: s.id,
+        cwd: s.cwd,
+        title: s.title,
+        updatedAt: s.updatedAt,
+      )).toList(),
+      nextCursor: sessions.length > 10 ? 'cursor_token' : null,
+    );
+  }
+}
+```
+
+**Parameters:**
+- `cursor` (optional): Pagination cursor for retrieving more results
+- `cwd` (optional): Filter sessions by working directory
+
+**Response:**
+- `sessions`: List of `SessionInfo` objects
+- `nextCursor`: Token for retrieving the next page (null if no more results)
+
+<Note>
+Advertise this capability by setting `sessionCapabilities.list` in your `initialize` response:
+
+```dart
+InitializeResponse(
+  agentCapabilities: AgentCapabilities(
+    sessionCapabilities: SessionCapabilities(
+      list: SessionListCapabilities(),
+    ),
+  ),
+)
+```
+</Note>
+
+### session/fork
+
+Forks an existing session to create a new independent session with the same history.
+
+```dart
+@override
+Future<ForkSessionResponse>? unstableForkSession(
+  ForkSessionRequest params,
+) async {
+  // Load original session
+  final originalSession = await loadSessionById(params.sessionId);
+  
+  // Create new session with copied history
+  final newSessionId = await forkSession(
+    originalSession,
+    cwd: params.cwd,
+    mcpServers: params.mcpServers,
+  );
+  
+  return ForkSessionResponse(
+    sessionId: newSessionId,
+    modes: originalSession.modes,
+    models: originalSession.models,
+    configOptions: originalSession.configOptions,
+  );
+}
+```
+
+**Use Cases:**
+- Experiment with different approaches from the same starting point
+- Create "what-if" scenarios
+- Branch conversations without losing the original
+
+**Capability Advertisement:**
+```dart
+sessionCapabilities: SessionCapabilities(
+  fork: SessionForkCapabilities(),
+)
+```
+
+### session/resume
+
+Resumes an existing session without replaying the entire message history.
+
+```dart
+@override
+Future<ResumeSessionResponse>? unstableResumeSession(
+  ResumeSessionRequest params,
+) async {
+  // Restore session state without replaying history
+  final session = await restoreSessionState(params.sessionId);
+  
+  // Reconnect to MCP servers
+  await connectToMcpServers(params.mcpServers ?? session.mcpServers);
+  
+  return ResumeSessionResponse(
+    modes: session.modes,
+    models: session.models,
+    configOptions: session.configOptions,
+  );
+}
+```
+
+**Difference from `session/load`:**
+
+<CardGroup cols={2}>
+  <Card title="session/load" icon="folder-open">
+    - Replays entire conversation history
+    - Sends all previous messages via `session/update`
+    - Slower but provides complete context
+  </Card>
+  <Card title="session/resume" icon="play">
+    - Skips history replay
+    - Only restores session state
+    - Faster for long conversations
+  </Card>
+</CardGroup>
+
+**Capability Advertisement:**
+```dart
+sessionCapabilities: SessionCapabilities(
+  resume: SessionResumeCapabilities(),
+)
+```
+
+### session/set_model
+
+Changes the language model for a given session.
+
+```dart
+@override
+Future<SetSessionModelResponse?>? setSessionModel(
+  SetSessionModelRequest params,
+) async {
+  await updateSessionModel(
+    sessionId: params.sessionId,
+    modelId: params.modelId,
+  );
+  
+  return SetSessionModelResponse();
+}
+```
+
+**Parameters:**
+- `sessionId`: The session to update
+- `modelId`: The new model identifier
+
+**Model Selection:**
+```dart
+// Advertise available models in session responses
+NewSessionResponse(
+  sessionId: sessionId,
+  models: SessionModelState(
+    availableModels: [
+      ModelInfo(
+        modelId: 'gpt-4',
+        name: 'GPT-4',
+        description: 'Most capable model',
+      ),
+      ModelInfo(
+        modelId: 'gpt-3.5-turbo',
+        name: 'GPT-3.5 Turbo',
+        description: 'Fast and efficient',
+      ),
+    ],
+    currentModelId: 'gpt-4',
+  ),
+)
+```
+
+<Tip>
+Clients can use this method to allow users to switch models mid-conversation without creating a new session.
+</Tip>
+
+## Unstable Session Updates
+
+Additional session update types for enhanced session tracking.
+
+### session_info_update
+
+Updates metadata about the session itself.
+
+```dart
+await connection.sessionUpdate(SessionNotification(
+  sessionId: sessionId,
+  update: SessionInfoUpdate(
+    title: 'Debug authentication issue',
+    updatedAt: DateTime.now().toIso8601String(),
+  ),
+));
+```
+
+**Fields:**
+- `title`: Human-readable session title
+- `updatedAt`: ISO 8601 timestamp of last update
+
+**Use Cases:**
+- Auto-generate session titles based on conversation content
+- Track session activity for UI display
+- Sync session metadata across clients
+
+### usage_update
+
+Provides token usage and cost information.
+
+```dart
+await connection.sessionUpdate(SessionNotification(
+  sessionId: sessionId,
+  update: UsageUpdate(
+    size: 100000,  // Total context size
+    used: 42500,   // Tokens used so far
+    cost: Cost(
+      amount: 0.15,
+      currency: 'USD',
+    ),
+  ),
+));
+```
+
+**Fields:**
+- `size`: Total available context window size
+- `used`: Number of tokens used in this session
+- `cost`: Estimated cost (optional)
+
+**Use Cases:**
+- Display context window usage to users
+- Warn when approaching token limits
+- Track API costs per session
+
+<Info>
+Usage updates can be sent periodically during prompt processing to keep the UI synchronized with token consumption.
+</Info>
+
+## Implementation Guidelines
+
+<AccordionGroup>
+  <Accordion title="Method Registration">
+    Unstable methods are registered in the connection's request handler:
+    
+    ```dart
+    // From lib/src/acp.dart
+    Future<dynamic> requestHandler(String method, dynamic params) async {
+      switch (method) {
+        case 'session/list':
+          return handleOptionalRequest(
+            method,
+            params,
+            ListSessionsRequest.fromJson,
+            agent.unstableListSessions,
+          );
+        // ... other cases
+      }
+    }
+    ```
+    
+    If your agent doesn't implement an unstable method, return `null` and the SDK will respond with `Method not found`.
+  </Accordion>
+  
+  <Accordion title="Capability Negotiation">
+    Unstable features should be advertised during initialization:
+    
+    ```dart
+    @override
+    Future<InitializeResponse> initialize(InitializeRequest params) async {
+      return InitializeResponse(
+        protocolVersion: 1,
+        agentCapabilities: AgentCapabilities(
+          sessionCapabilities: SessionCapabilities(
+            list: SessionListCapabilities(),
+            fork: SessionForkCapabilities(),
+            resume: SessionResumeCapabilities(),
+          ),
+        ),
+      );
+    }
+    ```
+    
+    Clients should check for these capabilities before calling unstable methods.
+  </Accordion>
+  
+  <Accordion title="Future Migration Path">
+    When unstable features become stable:
+    
+    1. Method names may change (e.g., `unstableListSessions` → `listSessions`)
+    2. Request/response schemas may be refined
+    3. Capability advertisement requirements may change
+    4. Error handling semantics may be standardized
+    
+    Always check the [ACP changelog](https://github.com/zed-industries/agent-client-protocol/releases) for migration guides.
+  </Accordion>
+</AccordionGroup>
+
+## Testing Unstable Features
+
+The SDK includes tests for unstable features to ensure they work as expected:
+
+```dart
+// Example test structure
+test('session/list returns sessions', () async {
+  final agent = TestAgent();
+  final connection = AgentSideConnection(
+    (_) => agent,
+    testStream,
+  );
+  
+  final response = await agent.unstableListSessions(
+    ListSessionsRequest(cwd: '/project'),
+  );
+  
+  expect(response?.sessions, isNotEmpty);
+});
+```
+
+<Warning>
+When writing tests for unstable features, clearly mark them as unstable and be prepared to update or remove them when the protocol changes.
+</Warning>
+
+## Migration Strategy
+
+If you're using unstable features in production:
+
+1. **Monitor the Protocol:** Watch the [ACP repository](https://github.com/zed-industries/agent-client-protocol) for changes
+2. **Version Pin:** Consider pinning to a specific SDK version until features stabilize
+3. **Feature Flags:** Use feature flags to easily disable unstable features
+4. **Fallback Logic:** Implement graceful degradation when unstable methods fail
+
+```dart
+// Example: Safe unstable feature usage
+Future<List<SessionInfo>> listSessions(String cwd) async {
+  try {
+    final response = await connection.unstableListSessions(
+      ListSessionsRequest(cwd: cwd),
+    );
+    return response.sessions;
+  } catch (e) {
+    // Fallback: Use local session cache
+    return localSessionCache.getSessions(cwd);
+  }
+}
+```
+
+<Card title="Next: Protocol Extensions" icon="arrow-right" href="/protocol/extensions">
+  Learn how to add custom protocol methods
+</Card>

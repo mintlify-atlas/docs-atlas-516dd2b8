@@ -1,0 +1,99 @@
+---
+title: "Notifications"
+description: "Notification types that do not expect a response"
+---
+
+## Overview
+
+Notifications are one-way messages that do not expect a response. They are used to inform the other party about events or state changes.
+
+## Session Cancellation
+
+### CancelNotification
+
+Notification to cancel ongoing operations for a session. See [Cancellation](https://agentclientprotocol.com/protocol/prompt-turn#cancellation).
+
+<ParamField path="sessionId" type="String" required>
+  The ID of the session to cancel operations for
+</ParamField>
+
+<ParamField path="_meta" type="Map<String, dynamic>">
+  Optional metadata
+</ParamField>
+
+#### Usage
+
+When a client sends this notification, the agent should:
+- Stop all language model requests as soon as possible
+- Abort all tool call invocations in progress
+- Send any pending `session/update` notifications
+- Respond to the original `session/prompt` request with `StopReason::Cancelled`
+
+## Request Cancellation
+
+### CancelRequestNotification
+
+Protocol-level notification to cancel a specific in-flight JSON-RPC request. See [Request Cancellation](https://agentclientprotocol.com/protocol/draft/schema#cancelrequestnotification).
+
+<ParamField path="requestId" type="RequestId" required>
+  The request identifier to cancel (JSON-RPC Request ID)
+</ParamField>
+
+<ParamField path="_meta" type="Map<String, dynamic>">
+  Optional metadata
+</ParamField>
+
+#### Usage
+
+This is a protocol-level notification that can be sent by either party to request cancellation of a specific pending request. The receiving party should make a best effort to cancel the request but may not be able to guarantee cancellation.
+
+## Session Updates
+
+### SessionNotification
+
+Notification containing a session update from the agent. Used to stream real-time progress and results during prompt processing. See [Agent Reports Output](https://agentclientprotocol.com/protocol/prompt-turn#3-agent-reports-output).
+
+<ParamField path="sessionId" type="String" required>
+  The ID of the session this update pertains to
+</ParamField>
+
+<ParamField path="update" type="SessionUpdate" required>
+  The actual update content. Can be one of many types:
+  - `UserMessageChunkSessionUpdate` - User message content
+  - `AgentMessageChunkSessionUpdate` - Agent message content
+  - `AgentThoughtChunkSessionUpdate` - Agent internal thoughts
+  - `ToolCallSessionUpdate` - New tool call
+  - `ToolCallUpdateSessionUpdate` - Tool call status update
+  - `PlanSessionUpdate` - Execution plan update
+  - `AvailableCommandsUpdateSessionUpdate` - Available commands update
+  - `CurrentModeUpdateSessionUpdate` - Mode change
+  - `ConfigOptionUpdate` - Configuration change
+  - `SessionInfoUpdate` - Session metadata update
+  - `UsageUpdate` - Token usage update
+  
+  See the [Session Updates](/api/session-updates) page for detailed information about each update type.
+</ParamField>
+
+<ParamField path="_meta" type="Map<String, dynamic>">
+  Optional metadata
+</ParamField>
+
+#### Usage
+
+Clients receive these notifications throughout the lifetime of a prompt request. They should:
+- Update the UI in real-time to reflect agent progress
+- Continue accepting tool call updates even after sending a `session/cancel` notification
+- Handle all update types gracefully, including unknown types for forward compatibility
+
+## Extension Notifications
+
+### ExtNotification
+
+Allows custom notifications that are not part of the ACP specification.
+
+<Info>
+  Extension notifications use method names with a leading underscore (e.g., `_custom_notification`).
+  ACP reserves the `_` prefix for extensions.
+</Info>
+
+The structure and fields of extension notifications are determined by the specific extension being used.
