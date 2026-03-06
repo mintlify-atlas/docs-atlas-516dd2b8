@@ -1,0 +1,142 @@
+{
+  "projectType": "sdk-library",
+  "projectName": "ACP Dart SDK",
+  "projectDescription": "Official Dart SDK for the Agent Client Protocol - enabling standardized communication between code editors and AI-powered coding agents",
+  "theme": "palm",
+  "primaryColor": "#040404",
+  "lightColor": "#ffffff",
+  "darkColor": null,
+  "navigation": {
+    "tabs": [
+      {
+        "tab": "Documentation",
+        "groups": [
+          {
+            "group": "Get Started",
+            "pages": [
+              "introduction",
+              "installation",
+              "quickstart"
+            ]
+          },
+          {
+            "group": "Core Concepts",
+            "pages": [
+              "concepts/protocol-overview",
+              "concepts/agents",
+              "concepts/clients",
+              "concepts/connections",
+              "concepts/sessions"
+            ]
+          },
+          {
+            "group": "Guides",
+            "pages": [
+              "guides/building-agent",
+              "guides/building-client",
+              "guides/error-handling",
+              "guides/terminal-operations",
+              "guides/file-system-operations"
+            ]
+          },
+          {
+            "group": "Examples",
+            "pages": [
+              "examples/basic-agent",
+              "examples/basic-client",
+              "examples/advanced-usage"
+            ]
+          }
+        ]
+      },
+      {
+        "tab": "API Reference",
+        "groups": [
+          {
+            "group": "Core Types",
+            "pages": [
+              "api/agent",
+              "api/client",
+              "api/agent-side-connection",
+              "api/client-side-connection",
+              "api/connection"
+            ]
+          },
+          {
+            "group": "Schema",
+            "pages": [
+              "api/requests",
+              "api/responses",
+              "api/notifications",
+              "api/session-updates",
+              "api/terminal-handle"
+            ]
+          },
+          {
+            "group": "RPC Unions",
+            "pages": [
+              "api/rpc-unions"
+            ]
+          },
+          {
+            "group": "Utilities",
+            "pages": [
+              "api/stream",
+              "api/error-handling"
+            ]
+          }
+        ]
+      },
+      {
+        "tab": "Protocol",
+        "groups": [
+          {
+            "group": "Protocol Support",
+            "pages": [
+              "protocol/support-matrix",
+              "protocol/stable-features",
+              "protocol/unstable-features",
+              "protocol/extensions"
+            ]
+          }
+        ]
+      }
+    ]
+  },
+  "keyFeatures": [
+    "Type-safe Agent and Client implementations",
+    "Comprehensive ACP protocol support with stable and unstable features",
+    "RPC union types for exhaustive message handling",
+    "NDJSON stream-based communication",
+    "Built-in error handling and JSON-RPC error mapping",
+    "Terminal operations management",
+    "File system operations support",
+    "Session management and lifecycle",
+    "Protocol cancellation support",
+    "Extension methods and notifications"
+  ],
+  "publicApiSurface": [
+    "Agent",
+    "AgentSideConnection",
+    "Client",
+    "ClientSideConnection",
+    "Connection",
+    "RequestError",
+    "TerminalHandle",
+    "ndJsonStream",
+    "AcpStream",
+    "InitializeRequest",
+    "InitializeResponse",
+    "NewSessionRequest",
+    "NewSessionResponse",
+    "PromptRequest",
+    "PromptResponse",
+    "SessionNotification",
+    "AgentRequestUnion",
+    "AgentResponseUnion",
+    "ClientRequestUnion",
+    "ClientResponseUnion",
+    "AgentNotificationUnion",
+    "ClientNotificationUnion"
+  ]
+}
